@@ -40,7 +40,23 @@ Se deschide în browser. Oprire: `Ctrl + C` în terminal.
    - **Scopus**: export CSV sau RIS (bifează „Abstract”).
    - **Web of Science**: *Export → Tab delimited file* sau RIS.
    - **Excel**: salvează ca CSV, cu coloanele `Title`, `Abstract`, `Authors`, `Year`, `DOI`.
-   - Tot aici stabiliți **motivele de excludere** și cuvintele-cheie evidențiate cu verde/roșu în abstract.
+   - Tot aici lipiți **protocolul review-ului** (criteriile de eligibilitate) și cuvintele-cheie evidențiate cu verde/roșu în abstract. Protocolul se scrie ca text simplu:
+     ```
+     In functie de populatie
+     Inclusion: Pacienți adulți
+     Exclusion: Studii pe animale
+
+     In functie de designul studiului
+     Inclusion: Studii randomizate controlate
+     Exclusion: Case reports
+
+     Clarificare: adult = 18 ani sau mai mult
+     ```
+     - un rând simplu = titlul unei categorii;
+     - `Inclusion:` / `Includere:` = criteriu de includere; `Exclusion:` / `Excludere:` = criteriu de excludere;
+     - `Clarificare:` / `Notă:` / `Definiție:` = precizări.
+
+     Sub căsuță vezi imediat cum a înțeles aplicația protocolul. După salvare, protocolul apare lângă fiecare articol (la screening și la conflicte), are un tab propriu, iar **criteriile de excludere devin automat lista de motive de excludere** (și apar așa în rezultate și în exportul final).
 2. **Tab 2 – Screening**: fiecare recenzor își alege rolul și își scrie numele în bara de sus. Scurtături: **I** = inclus, **E** = exclus, **N** = nesigur, **← →** = navigare. Decizia se poate schimba oricând.
 3. **Tab 3 – Conflicte**: arbitrul vede opiniile ambilor recenzori (cu motive și note) și decide.
 4. **Tab 4 – Rezultate**: statistică, cifre PRISMA, descărcare.

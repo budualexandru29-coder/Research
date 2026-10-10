@@ -36,6 +36,7 @@ SET_IMPLICIT <- list(
              "Limbă",
              "Studiu pe animale / in vitro",
              "Altul (vezi nota)"),
+  protocol = "",      # textul protocolului (criterii de includere / excludere)
   kw_inc = "",
   kw_exc = "",
   identificate = 0,
@@ -392,6 +393,82 @@ afiseaza_articol <- function(r, nr, total, s) {
 }
 
 # ---------------------------------------------------------------------
+# 5b. PROTOCOLUL REVIEW-ULUI (criterii de includere / excludere)
+# ---------------------------------------------------------------------
+# Protocolul se scrie (sau se lipește) ca text simplu, de exemplu:
+#
+#   In functie de populatie
+#   Inclusion: Pacienți adulți
+#   Exclusion: Studii pe animale
+#   Clarificare: adult = 18 ani sau mai mult
+#
+# - rândurile care încep cu „Inclusion / Includere / Inclus:” = criterii de includere
+# - rândurile care încep cu „Exclusion / Excludere / Exclus:” = criterii de excludere
+# - rândurile care încep cu „Clarificare / Notă / Definiție:” = precizări
+# - orice alt rând = titlul unei categorii (ex. „Populație”, „Design”)
+parseaza_protocol <- function(txt) {
+  gol <- data.frame(categorie = character(0), tip = character(0), text = character(0),
+                    stringsAsFactors = FALSE)
+  if (is.null(txt) || !nzchar(trimws(txt))) return(gol)
+  linii <- trimws(unlist(strsplit(txt, "\n")))
+  linii <- sub("^[•*·]\\s*", "", linii)                # elimin buline
+  linii <- linii[nzchar(linii)]
+  tipare <- c(
+    inc  = "^(criteri[iua]+ de )?(inclusion|includere|inclus|include)( criteria| criterii| criteriu)?\\s*[:–-]\\s*",
+    exc  = "^(criteri[iua]+ de )?(exclusion|excludere|exclus|exclude)( criteria| criterii| criteriu)?\\s*[:–-]\\s*",
+    nota = "^(clarific[a-zăâîșțţş]*|not[ăa]|note|precizare|precizări|definiți[ie]|definiti[ie]|observați[ie])( aspecte)?\\s*[:–-]?\\s*"
+  )
+  cat_curenta <- "General"
+  rez <- gol
+  for (l in linii) {
+    tip <- NA
+    for (t in names(tipare)) if (grepl(tipare[[t]], l, ignore.case = TRUE, perl = TRUE)) { tip <- t; break }
+    if (is.na(tip)) {
+      cat_curenta <- trimws(sub(":\\s*$", "", sub("^#+\\s*", "", l)))
+      next
+    }
+    text <- trimws(sub(tipare[[tip]], "", l, ignore.case = TRUE, perl = TRUE))
+    if (tip == "nota" && !nzchar(text)) next
+    rez <- rbind(rez, data.frame(categorie = if (tip == "nota") "Clarificări" else cat_curenta,
+                                 tip = tip, text = text, stringsAsFactors = FALSE))
+  }
+  rez
+}
+
+# Motivele de excludere = criteriile de excludere din protocol (grupate pe categorii).
+# Dacă protocolul nu are criterii de excludere, se folosește lista generală.
+alegeri_motive <- function(s) {
+  pr <- parseaza_protocol(s$protocol)
+  ex <- pr[pr$tip == "exc", , drop = FALSE]
+  if (!nrow(ex)) return(c("(fără motiv)" = "", SET_IMPLICIT$motive))
+  grupe <- lapply(split(ex, factor(ex$categorie, unique(ex$categorie))), function(d) {
+    v <- paste0(d$categorie, ": ", d$text)
+    setNames(v, d$text)
+  })
+  c(list("(fără motiv)" = ""), grupe, list("Altele" = c("Altul (vezi nota)" = "Altul (vezi nota)")))
+}
+
+# Afișarea protocolului (în screening, conflicte și tab-ul „Protocol”)
+protocol_ui <- function(s, deschis = TRUE) {
+  pr <- parseaza_protocol(s$protocol)
+  if (!nrow(pr))
+    return(p(class = "scurtaturi", "Niciun protocol salvat. Îl poți adăuga în tab-ul «1. Import & setări»."))
+  categorii <- unique(pr$categorie)
+  blocuri <- lapply(categorii, function(c) {
+    d <- pr[pr$categorie == c, , drop = FALSE]
+    div(class = "crit-cat",
+        div(class = "crit-titlu", c),
+        lapply(seq_len(nrow(d)), function(i) {
+          simbol <- switch(d$tip[i], inc = "✔", exc = "✘", nota = "ℹ")
+          div(class = paste0("crit crit-", d$tip[i]), span(class = "crit-simbol", simbol), d$text[i])
+        }))
+  })
+  tags$details(open = if (deschis) NA else NULL, class = "protocol",
+               tags$summary(strong("Criterii de eligibilitate (protocol)")),
+               blocuri)
+}
+
+# ---------------------------------------------------------------------
 # 6. INTERFAȚA (UI)
 # ---------------------------------------------------------------------
 CSS <- "
@@ -410,6 +487,15 @@ CSS <- "
   .prog { padding-top:25px; }
   progress { width:100%; height:14px; }
   .scurtaturi { color:#777; font-size:12px; }
+  .protocol { background:#fff; border:1px solid #ddd; border-radius:6px; padding:8px 10px; margin-top:10px;
+              max-height:420px; overflow-y:auto; font-size:13px; }
+  .protocol summary { cursor:pointer; }
+  .crit-cat { margin-top:8px; }
+  .crit-titlu { font-weight:bold; color:#333; border-bottom:1px solid #eee; margin-bottom:3px; }
+  .crit { padding:1px 0 1px 20px; text-indent:-16px; }
+  .crit-simbol { display:inline-block; width:16px; text-indent:0; font-weight:bold; }
+  .crit-inc .crit-simbol { color:#28a745; } .crit-exc .crit-simbol { color:#dc3545; }
+  .crit-nota { color:#555; font-style:italic; } .crit-nota .crit-simbol { color:#17a2b8; }
 "
 
 # Scurtături de tastatură: I = inclus, E = exclus, N = nesigur, săgeți = navigare
@@ -466,7 +552,29 @@ ui <- navbarPage(
       column(6,
         h3("Setări comune"),
         p(class = "scurtaturi", "Setările sunt salvate pentru toată echipa. Stabiliți-le ÎNAINTE de screening."),
-        textAreaInput("motive_txt", "Motive de excludere (câte unul pe rând)", rows = 9),
+        textAreaInput("protocol_txt", "Protocolul review-ului (criterii de includere și excludere)", rows = 14,
+                      width = "100%",
+                      placeholder = paste("In functie de populatie",
+                                          "Inclusion: ...",
+                                          "Exclusion: ...",
+                                          "",
+                                          "In functie de designul studiului",
+                                          "Inclusion: ...",
+                                          "Exclusion: ...",
+                                          "",
+                                          "Clarificare: ...", sep = "\n")),
+        tags$details(class = "scurtaturi",
+          tags$summary("Cum se scrie protocolul?"),
+          tags$ul(
+            tags$li("Un rând simplu (ex. «In functie de populatie») = titlul unei categorii."),
+            tags$li("«Inclusion:» / «Includere:» la început de rând = criteriu de includere."),
+            tags$li("«Exclusion:» / «Excludere:» la început de rând = criteriu de excludere."),
+            tags$li("«Clarificare:» / «Notă:» / «Definiție:» = precizări (ex. definiția fazei cronice)."),
+            tags$li("Criteriile de excludere devin automat lista de «Motive de excludere» la screening.")
+          )),
+        h4("Așa a înțeles aplicația protocolul:"),
+        uiOutput("protocol_previzualizare"),
+        br(),
         textAreaInput("kw_inc_txt", "Cuvinte-cheie de evidențiat cu VERDE (criterii de includere, separate prin virgulă; * = orice terminație)",
                       rows = 2, placeholder = "ex. diabet*, metformin, randomi*"),
         textAreaInput("kw_exc_txt", "Cuvinte-cheie de evidențiat cu ROȘU (criterii de excludere)",
@@ -507,7 +615,8 @@ ui <- navbarPage(
               column(5, actionButton("b_mergi", "Mergi la nr.", width = "100%"))
             ),
             p(class = "scurtaturi", "Scurtături: I / E / N pentru decizie, ← → pentru navigare. ",
-              "Recenzorii nu văd deciziile celuilalt (screening în orb).")
+              "Recenzorii nu văd deciziile celuilalt (screening în orb)."),
+            uiOutput("protocol_screening")
           )
         )
       )
@@ -535,7 +644,8 @@ ui <- navbarPage(
                 actionButton("a_inc", "✔  INCLUS  (tasta I)", class = "btn-success btn-lg"),
                 actionButton("a_exc", "✘  EXCLUS  (tasta E)", class = "btn-danger btn-lg")),
             selectInput("a_motiv", "Motivul excluderii", choices = c("(fără motiv)" = "")),
-            textAreaInput("a_nota", "Justificarea arbitrului (opțional)", rows = 3)
+            textAreaInput("a_nota", "Justificarea arbitrului (opțional)", rows = 3),
+            uiOutput("protocol_conflict")
           )
         )
       )
@@ -566,6 +676,15 @@ ui <- navbarPage(
     )
   ),
 
+  # ---- Tab: Protocol ----
+  tabPanel("Protocol", value = "protocol",
+    fluidRow(column(8,
+      h3("Protocolul review-ului"),
+      p("Criteriile de eligibilitate stabilite de echipă. Se modifică din tab-ul «1. Import & setări»."),
+      uiOutput("protocol_complet")
+    ))
+  ),
+
   # ---- Tab 5: Ajutor ----
   tabPanel("Ajutor", value = "ajutor",
     fluidRow(column(8,
@@ -574,6 +693,8 @@ ui <- navbarPage(
         tags$li("O singură persoană importă articolele (tab 1) și salvează setările comune. ",
                 "Alege pe rând exporturile din toate bazele de date (se adună într-o listă), apoi «Importă»; ",
                 "duplicatele dintre baze se elimină automat."),
+        tags$li("Tot în tab 1 se lipește ", strong("protocolul"), " (criteriile de includere/excludere). ",
+                "El apare lângă fiecare articol, iar criteriile de excludere devin motivele de excludere."),
         tags$li("Recenzorul 1 și Recenzorul 2 își aleg rolul și numele în bara de sus și evaluează fiecare articol ",
                 "(tab 2), independent unul de celălalt."),
         tags$li("Arbitrul (rol «Arbitru») vede în tab 3 doar articolele unde recenzorii nu au fost de acord ",
@@ -630,14 +751,13 @@ server <- function(input, output, session) {
 
   # ---------- Setări ----------
   s0 <- citeste_setari()
-  updateTextAreaInput(session, "motive_txt", value = paste(s0$motive, collapse = "\n"))
+  updateTextAreaInput(session, "protocol_txt", value = s0$protocol)
   updateTextAreaInput(session, "kw_inc_txt", value = s0$kw_inc)
   updateTextAreaInput(session, "kw_exc_txt", value = s0$kw_exc)
 
   observeEvent(input$b_setari, {
     s <- citeste_setari()
-    m <- trimws(unlist(strsplit(input$motive_txt, "\n")))
-    s$motive <- m[nzchar(m)]
+    s$protocol <- input$protocol_txt
     s$kw_inc <- input$kw_inc_txt
     s$kw_exc <- input$kw_exc_txt
     saveRDS(s, F_SET)
@@ -646,10 +766,26 @@ server <- function(input, output, session) {
   })
 
   observe({
-    alegeri <- c("(fără motiv)" = "", date()$set$motive)
+    alegeri <- alegeri_motive(date()$set)
     updateSelectInput(session, "motiv",   choices = alegeri, selected = isolate(input$motiv))
     updateSelectInput(session, "a_motiv", choices = alegeri, selected = isolate(input$a_motiv))
   })
+
+  # ---------- Protocol ----------
+  output$protocol_previzualizare <- renderUI({
+    pr <- parseaza_protocol(input$protocol_txt)
+    if (!nrow(pr)) return(p(class = "scurtaturi", "(încă nimic — scrie sau lipește protocolul mai sus)"))
+    tagList(
+      p(class = "scurtaturi", sprintf("%d categorii · %d criterii de includere · %d criterii de excludere · %d clarificări",
+                                      length(unique(pr$categorie[pr$tip != "nota"])), sum(pr$tip == "inc"),
+                                      sum(pr$tip == "exc"), sum(pr$tip == "nota"))),
+      protocol_ui(list(protocol = input$protocol_txt)),
+      p(class = "scurtaturi", "Nu uita să apeși «Salvează setările».")
+    )
+  })
+  output$protocol_screening <- renderUI(protocol_ui(date()$set))
+  output$protocol_conflict  <- renderUI(protocol_ui(date()$set))
+  output$protocol_complet   <- renderUI(protocol_ui(date()$set))
 
   # ---------- Import ----------
   # Pas 1: fișierele alese sunt citite și li se recunoaște baza de date
