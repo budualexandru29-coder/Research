@@ -24,7 +24,7 @@ FOLDER_ID="$FOLDER_ID"
 SCRIPT
 cat >> "$BIN/monteaza-drive-screening.sh" <<'SCRIPT'
 D="$HOME/DriveScreening"
-mkdir -p "$D"
+mkdir -p "$D" "$HOME/.cache"
 # Dacă e montat ceva (poate tot Drive-ul), demontez și montez din nou doar folderul ales
 if mountpoint -q "$D"; then
   fusermount3 -u "$D" 2>/dev/null || fusermount -u "$D" 2>/dev/null
@@ -43,7 +43,8 @@ if ! mountpoint -q "$D"; then
     echo "     Am găsit fișiere salvate doar pe laptop; le mut în $LOCAL"
   fi
   rclone mount gdrive: "$D" --drive-root-folder-id "$FOLDER_ID" \
-    --vfs-cache-mode full --poll-interval 15s --daemon
+    --vfs-cache-mode full --poll-interval 15s --daemon \
+    --log-file "$HOME/.cache/rclone-screening.log" --log-level INFO
   sleep 2
   if mountpoint -q "$D" && [ -n "$LOCAL" ]; then
     cp -rn "$LOCAL"/. "$D"/                  # -n: nu suprascrie ce există deja pe Drive

@@ -12,14 +12,20 @@ library(shiny)
 # ---------------------------------------------------------------------
 # 1. FIȘIERE ȘI CONSTANTE
 # ---------------------------------------------------------------------
-# Toate datele se salvează în acest folder (poate fi un folder sincronizat
-# Google Drive / Dropbox / Nextcloud, setat prin variabila SCREENING_DIR).
-DIR_DATE <- Sys.getenv("SCREENING_DIR", "date_screening")
-dir.create(DIR_DATE, showWarnings = FALSE, recursive = TRUE)
+# Folderul de bază (poate fi un folder sincronizat Google Drive / Dropbox /
+# Nextcloud, setat prin variabila SCREENING_DIR). Fiecare screening are în el
+# un subfolder cu numele lui, în care se salvează articolele și deciziile.
+DIR_BAZA <- Sys.getenv("SCREENING_DIR", "date_screening")
+dir.create(DIR_BAZA, showWarnings = FALSE, recursive = TRUE)
+DIR_BAZA <- normalizePath(DIR_BAZA)
 
-F_ART <- file.path(DIR_DATE, "articole.csv")
-F_SET <- file.path(DIR_DATE, "setari.rds")
-F_DEC <- function(rol) file.path(DIR_DATE, paste0("decizii_", rol, ".csv"))
+MARCAJ <- "proiect_screening.txt"   # fișier care marchează un folder ca fiind un screening
+FISIERE_DATE <- c("articole.csv", "setari.rds", "decizii_R1.csv", "decizii_R2.csv", "decizii_ARB.csv")
+NUME_VECHI <- "(screening fără nume, creat înainte)"
+
+F_ART <- function(dir) file.path(dir, "articole.csv")
+F_SET <- function(dir) file.path(dir, "setari.rds")
+F_DEC <- function(dir, rol) file.path(dir, paste0("decizii_", rol, ".csv"))
 
 ROLURI   <- c("Recenzor 1" = "R1", "Recenzor 2" = "R2", "Arbitru (al 3-lea recenzor)" = "ARB")
 ETICHETE <- c(include = "INCLUS", exclude = "EXCLUS", maybe = "NESIGUR")
@@ -85,23 +91,94 @@ scrie_csv <- function(d, f) {
   file.rename(tmp, f)
 }
 
-citeste_setari <- function() {
+citeste_setari <- function(dir) {
   s <- SET_IMPLICIT
-  if (file.exists(F_SET)) {
-    x <- tryCatch(readRDS(F_SET), error = function(e) list())
+  if (!is.null(dir) && file.exists(F_SET(dir))) {
+    x <- tryCatch(readRDS(F_SET(dir)), error = function(e) list())
     s[names(x)] <- x
   }
   s
 }
 
-salveaza_decizie <- function(rol, id, decizie, motiv, nota, nume) {
-  d <- citeste_csv(F_DEC(rol), COL_DEC)
+salveaza_decizie <- function(dir, rol, id, decizie, motiv, nota, nume) {
+  d <- citeste_csv(F_DEC(dir, rol), COL_DEC)
   d <- d[d$id != id, , drop = FALSE]
   d <- rbind(d, data.frame(id = id, decizie = decizie, motiv = motiv,
                            nota = nota, nume = nume,
                            data = format(Sys.time(), "%Y-%m-%d %H:%M:%S"),
                            stringsAsFactors = FALSE))
-  scrie_csv(d, F_DEC(rol))
+  scrie_csv(d, F_DEC(dir, rol))
+}
+
+# ---------------------------------------------------------------------
+# 2b. MAI MULTE SCREENING-URI (fiecare în folderul lui)
+# ---------------------------------------------------------------------
+ultima_modificare <- function(dir) {
+  t <- suppressWarnings(max(file.mtime(file.path(dir, FISIERE_DATE)), na.rm = TRUE))
+  if (!is.finite(t)) t <- file.mtime(dir)
+  t
+}
+
+# Lista screening-urilor: nume -> folder (cel mai recent modificat primul)
+lista_proiecte <- function() {
+  d <- list.dirs(DIR_BAZA, recursive = FALSE, full.names = TRUE)
+  d <- d[file.exists(file.path(d, MARCAJ))]
+  p <- setNames(d, basename(d))
+  if (any(file.exists(file.path(DIR_BAZA, FISIERE_DATE))))     # date salvate înainte de această versiune
+    p <- c(p, setNames(DIR_BAZA, NUME_VECHI))
+  if (length(p) > 1) p <- p[order(-as.numeric(sapply(p, ultima_modificare)))]
+  p
+}
+
+curata_nume <- function(x) {
+  x <- gsub("[/\\\\:*?\"<>|]", "", x)          # caractere interzise în numele de foldere
+  x <- trimws(gsub("\\s+", " ", x))
+  substr(x, 1, 60)
+}
+
+creeaza_proiect <- function(nume) {
+  nume <- curata_nume(nume)
+  if (!nzchar(nume)) stop("Scrie un nume pentru screening.")
+  if (tolower(nume) %in% c("screening_r", "date_screening")) stop("Alege alt nume.")
+  dir <- file.path(DIR_BAZA, nume)
+  if (dir.exists(dir)) stop("Există deja un folder cu acest nume.")
+  dir.create(dir, recursive = TRUE)
+  writeLines(c(paste("Screening:", nume), paste("Creat:", format(Sys.time(), "%Y-%m-%d %H:%M"))),
+             file.path(dir, MARCAJ), useBytes = TRUE)
+  dir
+}
+
+sterge_proiect <- function(dir) {
+  dir <- normalizePath(dir)
+  if (dir == DIR_BAZA) {                     # screening-ul vechi: șterg doar fișierele lui
+    unlink(file.path(dir, FISIERE_DATE))
+  } else if (dirname(dir) == DIR_BAZA && file.exists(file.path(dir, MARCAJ))) {
+    unlink(dir, recursive = TRUE)
+  } else stop("Folderul nu pare să fie un screening; nu îl șterg.")
+}
+
+rezumat_proiect <- function(dir) {
+  a  <- citeste_csv(F_ART(dir), COL_ART)
+  D  <- list(art = a, R1 = citeste_csv(F_DEC(dir, "R1"), COL_DEC),
+             R2 = citeste_csv(F_DEC(dir, "R2"), COL_DEC), ARB = citeste_csv(F_DEC(dir, "ARB"), COL_DEC))
+  t <- combina(D)
+  c(Articole = nrow(a),
+    "Recenzor 1" = sum(nzchar(t$R1)), "Recenzor 2" = sum(nzchar(t$R2)),
+    "Conflicte nerezolvate" = sum(t$stare == "conflict" & !nzchar(t$ARB)),
+    Incluse = sum(t$final == "include"))
+}
+
+# Pe Linux: datele sunt într-un folder „Drive” care NU e montat? (ar rămâne doar pe laptop)
+drive_nemontat <- function(cale) {
+  if (Sys.info()[["sysname"]] != "Linux" || !nzchar(Sys.which("mountpoint"))) return(FALSE)
+  cale <- normalizePath(cale, mustWork = FALSE)
+  if (!grepl("drive", cale, ignore.case = TRUE)) return(FALSE)
+  acasa <- normalizePath("~")
+  while (nchar(cale) > nchar(acasa)) {
+    if (suppressWarnings(system2("mountpoint", c("-q", shQuote(cale)))) == 0) return(FALSE)
+    cale <- dirname(cale)
+  }
+  TRUE
 }
 
 # ---------------------------------------------------------------------
@@ -521,12 +598,41 @@ ui <- navbarPage(
   id = "tab",
   header = tagList(
     tags$head(tags$style(HTML(CSS)), tags$script(HTML(JS))),
+    uiOutput("avertisment_drive"),
     div(class = "bara-rol",
         fluidRow(
-          column(3, selectInput("rol", "Rolul meu", ROLURI)),
-          column(3, textInput("nume", "Numele meu", placeholder = "ex. Ana Popescu")),
-          column(6, uiOutput("progres_scurt"))
+          column(3, selectInput("proiect", "Screening-ul la care lucrez", choices = NULL)),
+          column(2, selectInput("rol", "Rolul meu", ROLURI)),
+          column(2, textInput("nume", "Numele meu", placeholder = "ex. Ana Popescu")),
+          column(5, uiOutput("progres_scurt"))
         ))
+  ),
+
+  # ---- Tab 0: Screening-uri ----
+  tabPanel("0. Screening-uri", value = "proiecte",
+    fluidRow(
+      column(7,
+        h3("Screening-urile tale"),
+        p("Fiecare screening are articolele, protocolul și deciziile lui, salvate într-un folder cu numele lui, în: ",
+          code(DIR_BAZA)),
+        p("Screening-ul la care lucrezi se alege din bara de sus. Toți colegii trebuie să aleagă același screening."),
+        tableOutput("tabel_proiecte")
+      ),
+      column(5,
+        wellPanel(
+          h4("Creează un screening nou"),
+          textInput("nume_proiect_nou", NULL, placeholder = "ex. BCI post-AVC 2026", width = "100%"),
+          actionButton("b_creeaza", "Creează", class = "btn-primary")
+        ),
+        wellPanel(
+          h4("Șterge un screening"),
+          p(class = "scurtaturi", "Se șterg articolele, protocolul și toate deciziile lui. ",
+            "Pe Google Drive ajung în Coș (Trash), de unde se mai pot recupera 30 de zile."),
+          selectInput("proiect_sters", NULL, choices = NULL, width = "100%"),
+          actionButton("b_sterge", "Șterge...", class = "btn-danger")
+        )
+      )
+    )
   ),
 
   # ---- Tab 1: Import & setări ----
@@ -708,8 +814,8 @@ ui <- navbarPage(
         tags$li("Decizii diferite sau cel puțin un NESIGUR → conflict → decide arbitrul.")
       ),
       h3("Unde sunt datele"),
-      p("Totul se salvează automat în folderul ", code(normalizePath(DIR_DATE)),
-        " (articole.csv, decizii_R1.csv, decizii_R2.csv, decizii_ARB.csv). ",
+      p("Fiecare screening se salvează automat într-un folder cu numele lui, în ", code(DIR_BAZA),
+        " (articole.csv, setari.rds, decizii_R1.csv, decizii_R2.csv, decizii_ARB.csv). ",
         "Fă din când în când o copie de siguranță a acestui folder.")
     ))
   )
@@ -720,20 +826,116 @@ ui <- navbarPage(
 # ---------------------------------------------------------------------
 server <- function(input, output, session) {
 
+  # ---------- Screening-uri (proiecte) ----------
+  versiune_p <- reactiveVal(0)
+  proiecte_poll <- reactivePoll(4000, session,
+    checkFunc = function() {
+      d <- list.dirs(DIR_BAZA, recursive = FALSE)
+      paste(c(d, file.exists(file.path(d, MARCAJ)), file.exists(file.path(DIR_BAZA, FISIERE_DATE))), collapse = "|")
+    },
+    valueFunc = function() Sys.time())
+  proiecte <- reactive({ proiecte_poll(); versiune_p(); lista_proiecte() })
+
+  observe({
+    p <- proiecte()
+    sel <- isolate(input$proiect)
+    if (!length(p)) {
+      updateSelectInput(session, "proiect", choices = c("(niciun screening — creează unul în tab-ul 0)" = ""))
+      updateSelectInput(session, "proiect_sters", choices = c("(nimic de șters)" = ""))
+      return()
+    }
+    if (is.null(sel) || !(sel %in% p)) sel <- p[[1]]
+    updateSelectInput(session, "proiect", choices = p, selected = sel)
+    updateSelectInput(session, "proiect_sters", choices = p, selected = isolate(input$proiect_sters))
+  })
+
+  dir_p <- reactive({
+    d <- input$proiect
+    if (is.null(d) || !nzchar(d) || !dir.exists(d)) NULL else d
+  })
+  stare <- new.env()
+  observe(stare$dir <- dir_p())
+
+  cere_proiect <- function() {
+    if (is.null(dir_p())) {
+      showNotification("Creează sau alege întâi un screening (tab-ul «0. Screening-uri»).", type = "error")
+      return(FALSE)
+    }
+    TRUE
+  }
+
+  observeEvent(input$b_creeaza, {
+    tryCatch({
+      dir <- creeaza_proiect(input$nume_proiect_nou)
+      versiune_p(versiune_p() + 1)
+      updateSelectInput(session, "proiect", choices = lista_proiecte(), selected = dir)
+      updateTextInput(session, "nume_proiect_nou", value = "")
+      showNotification(paste("Am creat screening-ul", basename(dir)), type = "message")
+      updateNavbarPage(session, "tab", selected = "import")
+    }, error = function(e) showNotification(conditionMessage(e), type = "error"))
+  })
+
+  observeEvent(input$b_sterge, {
+    d <- input$proiect_sters; req(nzchar(d))
+    nume <- names(proiecte())[proiecte() == d][1]
+    showModal(modalDialog(
+      title = "Ștergi screening-ul?",
+      p("Se vor șterge articolele, protocolul și toate deciziile din ", strong(nume), "."),
+      textInput("confirm_sters", "Ca să confirmi, scrie STERGE:"),
+      footer = tagList(modalButton("Anulează"),
+                       actionButton("b_sterge_ok", "Șterge definitiv", class = "btn-danger"))))
+  })
+  observeEvent(input$b_sterge_ok, {
+    if (!identical(toupper(trimws(input$confirm_sters)), "STERGE")) {
+      showNotification("Scrie STERGE ca să confirmi.", type = "error"); return()
+    }
+    tryCatch({
+      sterge_proiect(input$proiect_sters)
+      removeModal()
+      versiune_p(versiune_p() + 1)
+      showNotification("Screening-ul a fost șters.", type = "message")
+    }, error = function(e) showNotification(conditionMessage(e), type = "error"))
+  })
+
+  output$tabel_proiecte <- renderTable({
+    p <- proiecte(); semnal()
+    if (!length(p)) return(data.frame(Mesaj = "Încă nu ai niciun screening. Creează unul în dreapta."))
+    r <- t(sapply(p, rezumat_proiect))
+    data.frame(Screening = names(p), r, "Ultima modificare" =
+                 format(as.POSIXct(sapply(p, ultima_modificare), origin = "1970-01-01"), "%Y-%m-%d %H:%M"),
+               check.names = FALSE)
+  }, digits = 0)
+
+  output$avertisment_drive <- renderUI({
+    invalidateLater(20000)
+    if (!drive_nemontat(DIR_BAZA)) return(NULL)
+    div(class = "alert alert-danger", style = "margin:0 0 10px 0",
+        strong("⚠ Google Drive NU este montat. "),
+        "Ce salvezi acum rămâne doar pe acest laptop și nu ajunge la colegi. ",
+        "Închide aplicația și pornește-o din iconița «Pornește Screening» (care montează întâi Drive-ul).")
+  })
+
   # Re-citește fișierele când se modifică (ex. alt recenzor salvează o decizie)
-  fisiere <- c(F_ART, F_SET, F_DEC("R1"), F_DEC("R2"), F_DEC("ARB"))
   semnal <- reactivePoll(2000, session,
-                         checkFunc = function() paste(file.mtime(fisiere), file.size(fisiere)),
+                         checkFunc = function() {
+                           if (is.null(stare$dir)) return("")
+                           f <- file.path(stare$dir, FISIERE_DATE)
+                           paste(stare$dir, file.mtime(f), file.size(f))
+                         },
                          valueFunc = function() Sys.time())
   versiune <- reactiveVal(0)   # crește după fiecare salvare făcută de mine
 
   date <- reactive({
     semnal(); versiune()
-    list(art = citeste_csv(F_ART, COL_ART),
-         set = citeste_setari(),
-         R1  = citeste_csv(F_DEC("R1"),  COL_DEC),
-         R2  = citeste_csv(F_DEC("R2"),  COL_DEC),
-         ARB = citeste_csv(F_DEC("ARB"), COL_DEC))
+    d <- dir_p()
+    if (is.null(d))
+      return(list(art = tabel_gol(COL_ART), set = SET_IMPLICIT,
+                  R1 = tabel_gol(COL_DEC), R2 = tabel_gol(COL_DEC), ARB = tabel_gol(COL_DEC)))
+    list(art = citeste_csv(F_ART(d), COL_ART),
+         set = citeste_setari(d),
+         R1  = citeste_csv(F_DEC(d, "R1"),  COL_DEC),
+         R2  = citeste_csv(F_DEC(d, "R2"),  COL_DEC),
+         ARB = citeste_csv(F_DEC(d, "ARB"), COL_DEC))
   })
   art    <- reactive(date()$art)
   tabel  <- reactive(combina(date()))
@@ -750,17 +952,22 @@ server <- function(input, output, session) {
   }
 
   # ---------- Setări ----------
-  s0 <- citeste_setari()
-  updateTextAreaInput(session, "protocol_txt", value = s0$protocol)
-  updateTextAreaInput(session, "kw_inc_txt", value = s0$kw_inc)
-  updateTextAreaInput(session, "kw_exc_txt", value = s0$kw_exc)
+  # la schimbarea screening-ului încarc setările lui
+  observeEvent(dir_p(), {
+    s0 <- citeste_setari(dir_p())
+    updateTextAreaInput(session, "protocol_txt", value = s0$protocol)
+    updateTextAreaInput(session, "kw_inc_txt", value = s0$kw_inc)
+    updateTextAreaInput(session, "kw_exc_txt", value = s0$kw_exc)
+    pregatite(NULL)
+  }, ignoreNULL = FALSE)
 
   observeEvent(input$b_setari, {
-    s <- citeste_setari()
+    if (!cere_proiect()) return()
+    s <- citeste_setari(dir_p())
     s$protocol <- input$protocol_txt
     s$kw_inc <- input$kw_inc_txt
     s$kw_exc <- input$kw_exc_txt
-    saveRDS(s, F_SET)
+    saveRDS(s, F_SET(dir_p()))
     versiune(versiune() + 1)
     showNotification("Setările au fost salvate.", type = "message")
   })
@@ -842,10 +1049,12 @@ server <- function(input, output, session) {
   # Pas 2: import efectiv, fișier cu fișier (deduplicare și între fișiere)
   observeEvent(input$b_import, {
     p <- pregatite(); req(p)
+    if (!cere_proiect()) return()
+    dir <- dir_p()
     p <- Filter(function(x) is.data.frame(x$date), p)
     tryCatch({
-      existente <- citeste_csv(F_ART, COL_ART)
-      s <- citeste_setari()
+      existente <- citeste_csv(F_ART(dir), COL_ART)
+      s <- citeste_setari(dir)
       if (is.null(s$pe_baze)) s$pe_baze <- list()
       jurnal <- NULL
       for (x in p) {
@@ -863,9 +1072,9 @@ server <- function(input, output, session) {
           Data = format(Sys.time(), "%Y-%m-%d %H:%M"), Fisier = x$nume, Baza = baza,
           Inregistrari = n, Noi = r$adaugate, Duplicate = r$duplicate, stringsAsFactors = FALSE))
       }
-      scrie_csv(existente, F_ART)
+      scrie_csv(existente, F_ART(dir))
       s$istoric <- rbind(s$istoric, jurnal)
-      saveRDS(s, F_SET)
+      saveRDS(s, F_SET(dir))
       pregatite(NULL)
       versiune(versiune() + 1)
       showNotification(sprintf("Import terminat: %d înregistrări citite, %d articole noi, %d duplicate.",
@@ -946,7 +1155,7 @@ server <- function(input, output, session) {
     if (length(x)) x[1] else ne[1]
   }
 
-  observeEvent(input$rol, {
+  observeEvent(list(input$rol, dir_p()), {
     if (input$rol == "ARB") return()
     i <- urmatorul_neevaluat(0, isolate(deciziile_mele()))
     idx(if (is.na(i)) 1 else i)
@@ -979,14 +1188,14 @@ server <- function(input, output, session) {
   })
 
   decide <- function(dec) {
-    if (input$rol == "ARB" || !verifica_nume()) return()
+    if (input$rol == "ARB" || !cere_proiect() || !verifica_nume()) return()
     a <- art(); if (!nrow(a)) return()
     i <- min(idx(), nrow(a))
-    salveaza_decizie(input$rol, a$id[i], dec,
+    salveaza_decizie(dir_p(), input$rol, a$id[i], dec,
                      if (dec == "exclude") input$motiv else "",
                      input$nota, trimws(input$nume))
     versiune(versiune() + 1)
-    d <- citeste_csv(F_DEC(input$rol), COL_DEC)
+    d <- citeste_csv(F_DEC(dir_p(), input$rol), COL_DEC)
     nxt <- urmatorul_neevaluat(i, d)
     if (is.na(nxt)) {
       showNotification("Ai evaluat toate articolele! Mulțumim. 🎉", type = "message", duration = 10)
@@ -1062,10 +1271,10 @@ server <- function(input, output, session) {
   })
 
   decide_arbitru <- function(dec) {
-    if (input$rol != "ARB" || !verifica_nume()) return()
+    if (input$rol != "ARB" || !cere_proiect() || !verifica_nume()) return()
     id <- input$conflict
     if (is.null(id) || !nzchar(id)) return()
-    salveaza_decizie("ARB", id, dec, if (dec == "exclude") input$a_motiv else "",
+    salveaza_decizie(dir_p(), "ARB", id, dec, if (dec == "exclude") input$a_motiv else "",
                      input$a_nota, trimws(input$nume))
     versiune(versiune() + 1)
     showNotification(sprintf("Decizie finală salvată pentru %s: %s", id, et(dec)), type = "message")

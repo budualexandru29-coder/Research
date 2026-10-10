@@ -32,6 +32,8 @@ Se deschide în browser. Oprire: `Ctrl + C` în terminal.
 
 ## 3. Pașii de lucru
 
+0. **Tab 0 – Screening-uri**: creezi un screening nou și îi dai un nume (ex. „BCI post-AVC”). Datele lui se salvează într-un folder cu acest nume. Poți avea oricâte screening-uri; cel la care lucrezi se alege din bara de sus. Tot aici poți **șterge** un screening (îți cere confirmare).
+
 1. **Tab 1 – Import & setări**: alege exporturile **pe rând**: apeși «Browse...», alegi un fișier, apoi din nou «Browse...» pentru următorul — fiecare se adaugă într-un tabel. Aplicația recunoaște automat baza de date a fiecărui fișier (PubMed, Scopus, Web of Science, Embase, Cochrane); verifică în tabel și corectează dacă e nevoie, apoi apasă **Importă**. Poți adăuga și mai târziu alte exporturi.
    - Duplicatele dintre baze (același DOI sau titlu) sunt eliminate automat; articolul păstrează toate bazele în care a apărut (ex. „PubMed; Scopus”), iar abstractul/DOI-ul lipsă se completează din celălalt export.
    - Vezi un tabel cu câte articole a adus fiecare bază și istoricul importurilor; cifrele pe baze apar și la PRISMA.
