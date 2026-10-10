@@ -1,0 +1,2 @@
+# fisierele .bat trebuie sa ramana cu terminatii de rand Windows (CRLF)
+*.bat -text

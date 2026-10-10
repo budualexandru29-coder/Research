@@ -68,12 +68,16 @@ Se deschide în browser. Oprire: `Ctrl + C` în terminal.
 2. Partajează folderul cu colegii, cu drept de **Editor**.
 3. Pornește aplicația, lipește protocolul, salvează setările și importă articolele. Doar el face importul.
 
-**Fiecare colaborator (Windows / Mac):**
-1. Instalează **R** (cran.r-project.org) și **RStudio Desktop** (posit.co/download/rstudio-desktop).
+**Fiecare colaborator pe Windows:**
+1. Instalează **R** de pe https://cran.r-project.org/bin/windows/base/ (Next, Next, Finish). RStudio nu e necesar.
 2. Instalează **Google Drive for Desktop**. În browser, pe folderul partajat: click dreapta → *Organize → Add shortcut to Drive*, ca să apară pe calculator.
-3. În File Explorer / Finder deschide `Google Drive → My Drive → folderul partajat → screening_R`, apoi deschide `porneste.R` cu RStudio.
-4. Apasă **Source** (sus, dreapta). Prima dată se instalează automat pachetul `shiny` (câteva minute).
+3. În File Explorer deschide `Google Drive → My Drive → folderul partajat → screening_R → windows` și dă dublu-click pe **`Creeaza_iconita_pe_Desktop.bat`** (o singură dată).
+4. De acum pornești aplicația cu dublu-click pe iconița **„Porneste Screening”** de pe Desktop. Prima dată durează câteva minute (se instalează pachetul `shiny`). Fereastra neagră trebuie să rămână deschisă cât lucrezi.
 5. În aplicație: alege-ți **rolul** (Recenzor 1 / Recenzor 2 / Arbitru) și scrie-ți **numele**.
+
+> Dacă Windows afișează „Windows protected your PC”, apasă *More info → Run anyway* (fișierele .bat nu sunt semnate digital).
+
+**Pe Mac:** instalează R și RStudio, deschide `screening_R/porneste.R` din folderul Google Drive cu RStudio și apasă **Source**.
 
 Datele se salvează automat în folderul partajat, lângă `screening_R`. Fiecare rol scrie în fișierul lui, deci nu vă încurcați.
 

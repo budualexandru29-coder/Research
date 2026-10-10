@@ -25,9 +25,13 @@ if (!file.exists(file.path(aici, "app.R")))
   stop("Nu găsesc app.R lângă porneste.R. Ține cele două fișiere în același folder «screening_R».")
 
 # Instalează pachetul shiny la prima pornire
+# (în biblioteca personală a utilizatorului, ca să nu fie nevoie de drepturi de administrator)
 if (!requireNamespace("shiny", quietly = TRUE)) {
   message("Instalez pachetul «shiny» (doar prima dată, durează câteva minute)...")
-  install.packages("shiny", repos = "https://cloud.r-project.org")
+  lib <- strsplit(Sys.getenv("R_LIBS_USER"), .Platform$path.sep)[[1]][1]
+  dir.create(lib, recursive = TRUE, showWarnings = FALSE)
+  .libPaths(c(lib, .libPaths()))
+  install.packages("shiny", lib = lib, repos = "https://cloud.r-project.org")
 }
 
 # Unde se salvează datele: folderul de deasupra lui «screening_R»
