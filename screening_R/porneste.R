@@ -35,4 +35,17 @@ if (!requireNamespace("shiny", quietly = TRUE)) {
 if (!nzchar(Sys.getenv("SCREENING_DIR"))) Sys.setenv(SCREENING_DIR = dirname(aici))
 message("Datele se salvează în: ", Sys.getenv("SCREENING_DIR"))
 
-shiny::runApp(aici, launch.browser = TRUE)
+# Deschide browserul (pe Linux prin xdg-open, care merge sigur și din terminal)
+deschide_browser <- function(url) {
+  message("\n>>> Aplicația rulează la adresa: ", url)
+  message(">>> Dacă browserul nu se deschide singur, copiază adresa în browser.")
+  message(">>> Pentru a opri aplicația, închide această fereastră (sau Ctrl + C).\n")
+  if (Sys.info()[["sysname"]] == "Linux" && nzchar(Sys.which("xdg-open"))) {
+    system2("xdg-open", url, wait = FALSE, stdout = FALSE, stderr = FALSE)
+  } else {
+    utils::browseURL(url)
+  }
+}
+
+message("Pornesc aplicația...")
+shiny::runApp(aici, launch.browser = deschide_browser)

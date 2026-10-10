@@ -51,14 +51,16 @@ SCRIPT
 # ---------- scriptul care pornește aplicația ----------
 cat > "$BIN/porneste-screening.sh" <<'SCRIPT'
 #!/bin/bash
-"$HOME/.local/bin/monteaza-drive-screening.sh" --fara-dolphin || { read -p "Apasă Enter pentru a închide..."; exit 1; }
+echo "1/2  Montez folderul de pe Google Drive..."
+"$HOME/.local/bin/monteaza-drive-screening.sh" --fara-dolphin || { echo "Montarea a eșuat."; read -p "Apasă Enter pentru a închide..."; exit 1; }
+echo "     Gata."
 APP="$HOME/DriveScreening/screening_R/porneste.R"
 if [ ! -f "$APP" ]; then
   echo "Nu găsesc $APP"
   echo "Copiază folderul screening_R în folderul de pe Google Drive."
   read -p "Apasă Enter pentru a închide..."; exit 1
 fi
-echo "Aplicația pornește în browser. Pentru a o opri, închide această fereastră."
+echo "2/2  Pornesc aplicația (prima dată poate dura câteva minute)..."
 Rscript "$APP"
 read -p "Aplicația s-a oprit. Apasă Enter pentru a închide..."
 SCRIPT
