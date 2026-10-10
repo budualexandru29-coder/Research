@@ -39,8 +39,13 @@ SET_IMPLICIT <- list(
   kw_inc = "",
   kw_exc = "",
   identificate = 0,
-  duplicate = 0
+  duplicate = 0,
+  pe_baze = list(),   # înregistrări identificate în fiecare bază de date (pentru PRISMA)
+  istoric = NULL      # istoricul importurilor (data, fișier, bază, înregistrări, noi, duplicate)
 )
+
+BAZE <- c("PubMed", "Scopus", "Web of Science", "Embase", "Cochrane Library",
+          "CINAHL", "PsycINFO", "Google Scholar", "Altă sursă")
 
 # Transformă codurile (include/exclude/maybe) în etichete în română
 et <- function(x) {
@@ -205,24 +210,73 @@ citeste_fisier <- function(cale, nume) {
   citeste_etichetat(cale)
 }
 
-# Adaugă articole noi, eliminând duplicatele (după DOI sau după titlu)
+# Recunoaște automat din ce bază de date provine un export
+detecteaza_baza <- function(cale, nume) {
+  l <- tryCatch(readLines(cale, n = 300, warn = FALSE, encoding = "UTF-8"),
+                error = function(e) character(0))
+  l <- sub("^\ufeff", "", l)
+  db <- sub("^DB  - ", "", grep("^DB  - ", l, value = TRUE))
+  if (length(db)) {
+    db <- db[1]
+    for (b in c("Embase", "Scopus", "Cochrane", "CINAHL", "PsycINFO", "Web of Science"))
+      if (grepl(b, db, ignore.case = TRUE)) return(if (b == "Cochrane") "Cochrane Library" else b)
+    if (grepl("medline|pubmed", db, ignore.case = TRUE)) return("PubMed")
+  }
+  if (any(grepl("^PMID- ", l))) return("PubMed")
+  if (length(l) && grepl("^\"?PMID\"?,\"?Title\"?|^\"?Title\"?,\"?Authors\"?,\"?Citation", l[1])) return("PubMed")
+  if (any(grepl("scopus\\.com", l, ignore.case = TRUE))) return("Scopus")
+  if (length(l) && (grepl("^(PT|FN)\t", l[1]) || grepl("^FN (Clarivate|Thomson)", l[1]))) return("Web of Science")
+  if (any(grepl("webofscience|isiknowledge", l, ignore.case = TRUE))) return("Web of Science")
+  if (any(grepl("cochranelibrary\\.com", l, ignore.case = TRUE))) return("Cochrane Library")
+  if (any(grepl("embase\\.com", l, ignore.case = TRUE))) return("Embase")
+  "Altă sursă"
+}
+
+# Adaugă articole noi, eliminând duplicatele (același DOI sau același titlu).
+# Un duplicat nu se pierde: baza lui de date se adaugă la articolul deja existent
+# (ex. „PubMed; Scopus”), iar câmpurile goale (abstract, DOI...) se completează din el.
 cheie_titlu <- function(t) gsub("[^a-z0-9]", "", tolower(iconv(t, to = "ASCII//TRANSLIT", sub = "")))
 
 adauga_articole <- function(noi, existente) {
   noi[] <- lapply(noi, function(x) { x[is.na(x)] <- ""; trimws(x) })
   noi$doi <- tolower(sub("^https?://(dx\\.)?doi\\.org/", "", noi$doi))
-  noi <- noi[nzchar(noi$titlu) | nzchar(noi$abstract), , drop = FALSE]
-  tot <- rbind(existente[, setdiff(COL_ART, "id")], noi[, setdiff(COL_ART, "id")])
-  kd <- tolower(tot$doi)
-  kt <- cheie_titlu(tot$titlu)
-  dup <- (nzchar(kd) & duplicated(kd)) | (nchar(kt) > 10 & duplicated(kt))
-  noi_idx <- seq_len(nrow(noi)) + nrow(existente)
-  ramase <- tot[noi_idx[!dup[noi_idx]], , drop = FALSE]
+  goale <- !(nzchar(noi$titlu) | nzchar(noi$abstract))
+  noi <- noi[!goale, , drop = FALSE]
+  noi$id <- ""
+  V <- as.list(rbind(existente[, COL_ART], noi[, COL_ART]))
+  kd <- tolower(V$doi)
+  kt <- cheie_titlu(V$titlu)
+  dupa_doi <- new.env(hash = TRUE)
+  dupa_titlu <- new.env(hash = TRUE)
+  inregistreaza <- function(i) {
+    if (nzchar(kd[i])) assign(kd[i], i, envir = dupa_doi)
+    if (nchar(kt[i]) > 10) assign(kt[i], i, envir = dupa_titlu)
+  }
+  for (i in seq_len(nrow(existente))) inregistreaza(i)
+
+  pastreaza <- rep(TRUE, length(V$id))
+  for (j in nrow(existente) + seq_len(nrow(noi))) {
+    m <- NULL
+    if (nzchar(kd[j])) m <- get0(kd[j], envir = dupa_doi, inherits = FALSE)
+    if (is.null(m) && nchar(kt[j]) > 10) m <- get0(kt[j], envir = dupa_titlu, inherits = FALSE)
+    if (is.null(m)) { inregistreaza(j); next }
+    # duplicat: îl contopim în articolul m
+    pastreaza[j] <- FALSE
+    surse <- trimws(unlist(strsplit(V$sursa[m], ";")))
+    if (!(V$sursa[j] %in% surse)) V$sursa[m] <- paste(c(surse[nzchar(surse)], V$sursa[j]), collapse = "; ")
+    for (f in c("autori", "an", "jurnal", "doi", "pmid", "abstract"))
+      if (!nzchar(V[[f]][m]) && nzchar(V[[f]][j])) V[[f]][m] <- V[[f]][j]
+    if (!nzchar(kd[m]) && nzchar(kd[j])) { kd[m] <- kd[j]; assign(kd[m], m, envir = dupa_doi) }
+  }
+  tot <- as.data.frame(V, stringsAsFactors = FALSE)[pastreaza, , drop = FALSE]
+  fara_id <- !nzchar(tot$id)
   start <- if (nrow(existente)) max(as.integer(sub("^A", "", existente$id))) else 0
-  ramase$id <- sprintf("A%04d", start + seq_len(nrow(ramase)))
-  list(articole = rbind(existente, ramase[, COL_ART, drop = FALSE]),
-       adaugate = nrow(ramase),
-       duplicate = nrow(noi) - nrow(ramase))
+  tot$id[fara_id] <- sprintf("A%04d", start + seq_len(sum(fara_id)))
+  rownames(tot) <- NULL
+  list(articole = tot,
+       adaugate = sum(fara_id),
+       duplicate = nrow(noi) - sum(fara_id),
+       goale = sum(goale))
 }
 
 # Exportă articole în format RIS (pentru Zotero / Mendeley / EndNote)
@@ -398,12 +452,13 @@ ui <- navbarPage(
           strong("RIS"), " (Scopus, Embase, Zotero, Mendeley, Cochrane), ",
           strong("PubMed .nbib/.txt"), " (format MEDLINE — singurul export PubMed care conține abstractul), ",
           strong("Web of Science"), " (tab-delimited .txt)."),
-        p("Poți importa mai multe fișiere (din baze de date diferite). ",
-          strong("Duplicatele"), " (același DOI sau același titlu) sunt eliminate automat."),
-        fileInput("fisiere", "Alege fișierul (sau fișierele)", multiple = TRUE,
+        p(strong("Poți selecta deodată toate exporturile"), " (PubMed, Scopus, Web of Science, Embase...) ",
+          "ținând apăsat Ctrl. Baza de date a fiecărui fișier este recunoscută automat; verifică și corectează în tabel. ",
+          strong("Duplicatele"), " dintre baze (același DOI sau același titlu) sunt eliminate automat, ",
+          "iar articolul păstrează toate bazele în care a apărut (ex. «PubMed; Scopus»)."),
+        fileInput("fisiere", "Alege fișierele", multiple = TRUE,
                   accept = c(".csv", ".tsv", ".ris", ".nbib", ".txt")),
-        textInput("sursa", "Numele bazei de date (opțional)", placeholder = "ex. PubMed"),
-        actionButton("b_import", "Importă", class = "btn-primary"),
+        uiOutput("pregatire"),
         br(), br(),
         uiOutput("info_import")
       ),
@@ -515,7 +570,9 @@ ui <- navbarPage(
     fluidRow(column(8,
       h3("Cum se lucrează"),
       tags$ol(
-        tags$li("O singură persoană importă articolele (tab 1) și salvează setările comune."),
+        tags$li("O singură persoană importă articolele (tab 1) și salvează setările comune. ",
+                "Selectează deodată exporturile din toate bazele de date (Ctrl + click); ",
+                "duplicatele dintre baze se elimină automat."),
         tags$li("Recenzorul 1 și Recenzorul 2 își aleg rolul și numele în bara de sus și evaluează fiecare articol ",
                 "(tab 2), independent unul de celălalt."),
         tags$li("Arbitrul (rol «Arbitru») vede în tab 3 doar articolele unde recenzorii nu au fost de acord ",
@@ -594,23 +651,78 @@ server <- function(input, output, session) {
   })
 
   # ---------- Import ----------
+  # Pas 1: fișierele alese sunt citite și li se recunoaște baza de date
+  pregatite <- reactiveVal(NULL)
+  nr_incarcare <- reactiveVal(0)
+  observeEvent(input$fisiere, {
+    f <- input$fisiere
+    nr_incarcare(nr_incarcare() + 1)
+    pregatite(lapply(seq_len(nrow(f)), function(i) {
+      d <- tryCatch(citeste_fisier(f$datapath[i], f$name[i]), error = function(e) conditionMessage(e))
+      list(nume = f$name[i], date = d, baza = detecteaza_baza(f$datapath[i], f$name[i]),
+           id = sprintf("baza_%d_%d", nr_incarcare(), i))
+    }))
+  })
+
+  output$pregatire <- renderUI({
+    p <- pregatite()
+    if (is.null(p)) return(NULL)
+    deja <- isolate(date()$set$istoric$Fisier)
+    randuri <- lapply(p, function(x) {
+      ok <- is.data.frame(x$date)
+      tags$tr(
+        tags$td(x$nume,
+                if (x$nume %in% deja)
+                  div(style = "color:#b36b00; font-size:12px",
+                      "⚠ un fișier cu acest nume a mai fost importat — dacă e același export, ",
+                      "nu-l importa din nou (cifrele PRISMA s-ar număra de două ori)")),
+        tags$td(if (ok) nrow(x$date) else span(style = "color:#c00", "eroare")),
+        tags$td(if (ok) selectizeInput(x$id, NULL, choices = unique(c(x$baza, BAZE)), selected = x$baza,
+                                       options = list(create = TRUE), width = "200px")
+                else span(style = "color:#c00", x$date))
+      )
+    })
+    nok <- sum(sapply(p, function(x) is.data.frame(x$date)))
+    tagList(
+      tags$table(class = "table table-condensed",
+                 tags$thead(tags$tr(tags$th("Fișier"), tags$th("Înregistrări"), tags$th("Baza de date"))),
+                 tags$tbody(randuri)),
+      p(class = "scurtaturi", "Poți scrie și alt nume de bază de date decât cele din listă."),
+      if (nok) actionButton("b_import", sprintf("Importă %d fișier(e)", nok), class = "btn-primary")
+    )
+  })
+
+  # Pas 2: import efectiv, fișier cu fișier (deduplicare și între fișiere)
   observeEvent(input$b_import, {
-    req(input$fisiere)
+    p <- pregatite(); req(p)
+    p <- Filter(function(x) is.data.frame(x$date), p)
     tryCatch({
-      noi <- do.call(rbind, lapply(seq_len(nrow(input$fisiere)), function(i) {
-        d <- citeste_fisier(input$fisiere$datapath[i], input$fisiere$name[i])
-        d$sursa <- if (nzchar(trimws(input$sursa))) trimws(input$sursa) else input$fisiere$name[i]
-        d
-      }))
-      r <- adauga_articole(noi, citeste_csv(F_ART, COL_ART))
-      scrie_csv(r$articole, F_ART)
+      existente <- citeste_csv(F_ART, COL_ART)
       s <- citeste_setari()
-      s$identificate <- s$identificate + nrow(noi)
-      s$duplicate <- s$duplicate + r$duplicate
+      if (is.null(s$pe_baze)) s$pe_baze <- list()
+      jurnal <- NULL
+      for (x in p) {
+        baza <- trimws(input[[x$id]])
+        if (!length(baza) || !nzchar(baza)) baza <- x$baza
+        d <- x$date
+        d$sursa <- rep(baza, nrow(d))
+        r <- adauga_articole(d, existente)
+        existente <- r$articole
+        n <- nrow(d) - r$goale
+        s$identificate <- s$identificate + n
+        s$duplicate <- s$duplicate + r$duplicate
+        s$pe_baze[[baza]] <- (if (is.null(s$pe_baze[[baza]])) 0 else s$pe_baze[[baza]]) + n
+        jurnal <- rbind(jurnal, data.frame(
+          Data = format(Sys.time(), "%Y-%m-%d %H:%M"), Fisier = x$nume, Baza = baza,
+          Inregistrari = n, Noi = r$adaugate, Duplicate = r$duplicate, stringsAsFactors = FALSE))
+      }
+      scrie_csv(existente, F_ART)
+      s$istoric <- rbind(s$istoric, jurnal)
       saveRDS(s, F_SET)
+      pregatite(NULL)
       versiune(versiune() + 1)
-      showNotification(sprintf("Am citit %d înregistrări: %d adăugate, %d duplicate/goale eliminate.",
-                               nrow(noi), r$adaugate, r$duplicate),
+      showNotification(sprintf("Import terminat: %d înregistrări citite, %d articole noi, %d duplicate.",
+                               sum(jurnal$Inregistrari), sum(jurnal$Noi), sum(jurnal$Duplicate)),
                        type = "message", duration = 10)
     }, error = function(e) {
       showNotification(paste("Eroare la import:", conditionMessage(e)), type = "error", duration = 15)
@@ -629,13 +741,30 @@ server <- function(input, output, session) {
         div(class = "alert alert-warning",
             sprintf("%d articole nu au abstract. Dacă sunt multe, probabil ai exportat din PubMed în format CSV — ", fara_abs),
             "folosește în schimb «Save → Format: PubMed» (fișier .txt), care include abstractele."),
-      tableOutput("pe_surse")
+      h4("Articole unice pe baze de date"),
+      tableOutput("pe_surse"),
+      if (!is.null(s$istoric) && nrow(s$istoric)) tagList(h4("Istoricul importurilor"), tableOutput("istoric"))
     )
   })
+  output$istoric <- renderTable(date()$set$istoric)
   output$pe_surse <- renderTable({
     a <- art(); req(nrow(a))
-    setNames(as.data.frame(table(a$sursa), stringsAsFactors = FALSE), c("Sursa", "Articole"))
-  })
+    surse <- lapply(strsplit(a$sursa, ";"), trimws)
+    baze <- sort(unique(unlist(surse)))
+    s <- date()$set
+    d <- data.frame(
+      Baza = baze,
+      Inregistrari = sapply(baze, function(b) if (is.null(s$pe_baze[[b]])) NA else s$pe_baze[[b]]),
+      Unice_gasite = sapply(baze, function(b) sum(sapply(surse, function(x) b %in% x))),
+      Doar_aici = sapply(baze, function(b) sum(sapply(surse, function(x) identical(x, b)))),
+      stringsAsFactors = FALSE)
+    names(d) <- c("Baza de date", "Înregistrări importate", "Articole unice găsite", "Găsite DOAR aici")
+    d <- rbind(d, data.frame(check.names = FALSE, "Baza de date" = "Găsite în ≥ 2 baze",
+                             "Înregistrări importate" = NA,
+                             "Articole unice găsite" = sum(lengths(surse) > 1),
+                             "Găsite DOAR aici" = NA))
+    d
+  }, digits = 0, na = "")
 
   # ---------- Bara de progres ----------
   output$progres_scurt <- renderUI({
@@ -837,8 +966,10 @@ server <- function(input, output, session) {
       ),
       h4("Cifre pentru diagrama PRISMA 2020"),
       tags$ul(
-        tags$li(sprintf("Înregistrări identificate din baze de date: %d", s$identificate)),
-        tags$li(sprintf("Duplicate (și înregistrări goale) eliminate: %d", s$duplicate)),
+        tags$li(sprintf("Înregistrări identificate din baze de date: %d", s$identificate),
+                if (length(s$pe_baze))
+                  tags$ul(lapply(names(s$pe_baze), function(b) tags$li(sprintf("%s (n = %d)", b, s$pe_baze[[b]]))))),
+        tags$li(sprintf("Duplicate eliminate: %d", s$duplicate)),
         tags$li(sprintf("Înregistrări screenate (titlu & abstract): %d", n)),
         tags$li(sprintf("Înregistrări excluse: %d", sum(t$final == "exclude"))),
         tags$li(sprintf("Rapoarte căutate pentru evaluarea full-text: %d", sum(t$final == "include")))

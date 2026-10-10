@@ -32,7 +32,10 @@ Se deschide în browser. Oprire: `Ctrl + C` în terminal.
 
 ## 3. Pașii de lucru
 
-1. **Tab 1 – Import & setări**: importă exportul din baza de date. Duplicatele (același DOI sau titlu) sunt eliminate automat. Poți încerca cu `exemplu_articole.csv` (articole fictive).
+1. **Tab 1 – Import & setări**: selectează **deodată toate exporturile** (ține apăsat `Ctrl` când alegi fișierele). Aplicația recunoaște automat baza de date a fiecărui fișier (PubMed, Scopus, Web of Science, Embase, Cochrane); verifică în tabel și corectează dacă e nevoie, apoi apasă **Importă**. Poți adăuga și mai târziu alte exporturi.
+   - Duplicatele dintre baze (același DOI sau titlu) sunt eliminate automat; articolul păstrează toate bazele în care a apărut (ex. „PubMed; Scopus”), iar abstractul/DOI-ul lipsă se completează din celălalt export.
+   - Vezi un tabel cu câte articole a adus fiecare bază și istoricul importurilor; cifrele pe baze apar și la PRISMA.
+   - Poți încerca cu `exemplu_articole.csv` (articole fictive).
    - **PubMed**: *Save → Format: PubMed* (fișier .txt) – conține abstractele. Exportul CSV din PubMed **nu** are abstract!
    - **Scopus**: export CSV sau RIS (bifează „Abstract”).
    - **Web of Science**: *Export → Tab delimited file* sau RIS.
