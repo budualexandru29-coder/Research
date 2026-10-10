@@ -82,6 +82,12 @@ Datele se salvează automat în folderul partajat, lângă `screening_R`. Fiecar
 Rscript "$HOME/DriveScreening/NumeleFolderului/screening_R/porneste.R"
 ```
 
+**Pictograme cu dublu-click pe Linux (KDE):** după ce rclone e configurat, rulează o singură dată
+```bash
+bash linux/instaleaza_scurtaturi.sh
+```
+(din folderul `screening_R`). Pe Desktop apar «Montează Drive Screening» și «Pornește Screening».
+
 **Actualizarea aplicației:** coordonatorul descarcă noul ZIP de pe GitHub și înlocuiește doar folderul `screening_R` de pe Drive. Datele nu se pierd (stau în afara lui).
 
 ## 4b. Alte variante de lucru în echipă
