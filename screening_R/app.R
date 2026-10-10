@@ -452,11 +452,12 @@ ui <- navbarPage(
           strong("RIS"), " (Scopus, Embase, Zotero, Mendeley, Cochrane), ",
           strong("PubMed .nbib/.txt"), " (format MEDLINE — singurul export PubMed care conține abstractul), ",
           strong("Web of Science"), " (tab-delimited .txt)."),
-        p(strong("Poți selecta deodată toate exporturile"), " (PubMed, Scopus, Web of Science, Embase...) ",
-          "ținând apăsat Ctrl. Baza de date a fiecărui fișier este recunoscută automat; verifică și corectează în tabel. ",
+        p(strong("Alege exporturile pe rând"), " (PubMed, Scopus, Web of Science, Embase...): ",
+          "fiecare fișier ales se adaugă în tabelul de mai jos. Baza de date a fiecărui fișier este recunoscută automat; verifică și corectează în tabel. ",
           strong("Duplicatele"), " dintre baze (același DOI sau același titlu) sunt eliminate automat, ",
           "iar articolul păstrează toate bazele în care a apărut (ex. «PubMed; Scopus»)."),
-        fileInput("fisiere", "Alege fișierele", multiple = TRUE,
+        fileInput("fisiere", "Alege un fișier (apoi încă unul, și tot așa)", multiple = TRUE,
+                  buttonLabel = "Browse...", placeholder = "niciun fișier ales",
                   accept = c(".csv", ".tsv", ".ris", ".nbib", ".txt")),
         uiOutput("pregatire"),
         br(), br(),
@@ -571,7 +572,7 @@ ui <- navbarPage(
       h3("Cum se lucrează"),
       tags$ol(
         tags$li("O singură persoană importă articolele (tab 1) și salvează setările comune. ",
-                "Selectează deodată exporturile din toate bazele de date (Ctrl + click); ",
+                "Alege pe rând exporturile din toate bazele de date (se adună într-o listă), apoi «Importă»; ",
                 "duplicatele dintre baze se elimină automat."),
         tags$li("Recenzorul 1 și Recenzorul 2 își aleg rolul și numele în bara de sus și evaluează fiecare articol ",
                 "(tab 2), independent unul de celălalt."),
@@ -655,14 +656,19 @@ server <- function(input, output, session) {
   pregatite <- reactiveVal(NULL)
   nr_incarcare <- reactiveVal(0)
   observeEvent(input$fisiere, {
+    # fișierele se ADAUGĂ la listă: le poți alege pe rând, câte unul
     f <- input$fisiere
     nr_incarcare(nr_incarcare() + 1)
-    pregatite(lapply(seq_len(nrow(f)), function(i) {
+    noi <- lapply(seq_len(nrow(f)), function(i) {
       d <- tryCatch(citeste_fisier(f$datapath[i], f$name[i]), error = function(e) conditionMessage(e))
       list(nume = f$name[i], date = d, baza = detecteaza_baza(f$datapath[i], f$name[i]),
            id = sprintf("baza_%d_%d", nr_incarcare(), i))
-    }))
+    })
+    vechi <- pregatite()
+    vechi <- Filter(function(x) !(x$nume %in% f$name), vechi)   # același fișier ales din nou -> îl înlocuiesc
+    pregatite(c(vechi, noi))
   })
+  observeEvent(input$b_goleste, pregatite(NULL))
 
   output$pregatire <- renderUI({
     p <- pregatite()
@@ -670,6 +676,8 @@ server <- function(input, output, session) {
     deja <- isolate(date()$set$istoric$Fisier)
     randuri <- lapply(p, function(x) {
       ok <- is.data.frame(x$date)
+      ales <- isolate(input[[x$id]])                    # păstrez ce ai corectat deja
+      if (is.null(ales) || !nzchar(ales)) ales <- x$baza
       tags$tr(
         tags$td(x$nume,
                 if (x$nume %in% deja)
@@ -677,7 +685,7 @@ server <- function(input, output, session) {
                       "⚠ un fișier cu acest nume a mai fost importat — dacă e același export, ",
                       "nu-l importa din nou (cifrele PRISMA s-ar număra de două ori)")),
         tags$td(if (ok) nrow(x$date) else span(style = "color:#c00", "eroare")),
-        tags$td(if (ok) selectizeInput(x$id, NULL, choices = unique(c(x$baza, BAZE)), selected = x$baza,
+        tags$td(if (ok) selectizeInput(x$id, NULL, choices = unique(c(ales, x$baza, BAZE)), selected = ales,
                                        options = list(create = TRUE), width = "200px")
                 else span(style = "color:#c00", x$date))
       )
@@ -688,7 +696,10 @@ server <- function(input, output, session) {
                  tags$thead(tags$tr(tags$th("Fișier"), tags$th("Înregistrări"), tags$th("Baza de date"))),
                  tags$tbody(randuri)),
       p(class = "scurtaturi", "Poți scrie și alt nume de bază de date decât cele din listă."),
-      if (nok) actionButton("b_import", sprintf("Importă %d fișier(e)", nok), class = "btn-primary")
+      p(strong("Mai ai și alte exporturi?"), " Apasă din nou «Browse...» și alege următorul fișier — ",
+        "se adaugă în tabel. Când ai toate fișierele în tabel, apasă «Importă»."),
+      if (nok) actionButton("b_import", sprintf("Importă %d fișier(e)", nok), class = "btn-primary"),
+      actionButton("b_goleste", "Golește lista")
     )
   })
 
