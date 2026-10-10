@@ -34,9 +34,22 @@ if mountpoint -q "$D"; then
   fi
 fi
 if ! mountpoint -q "$D"; then
+  # Dacă în folder s-au salvat fișiere cât timp Drive-ul NU era montat, le mut deoparte
+  # (altfel montarea eșuează), iar după montare le urc pe Drive.
+  LOCAL=""
+  if [ -n "$(ls -A "$D" 2>/dev/null)" ]; then
+    LOCAL="$HOME/DriveScreening_salvate_local_$(date +%Y%m%d_%H%M%S)"
+    mv "$D" "$LOCAL" && mkdir -p "$D"
+    echo "     Am găsit fișiere salvate doar pe laptop; le mut în $LOCAL"
+  fi
   rclone mount gdrive: "$D" --drive-root-folder-id "$FOLDER_ID" \
     --vfs-cache-mode full --poll-interval 15s --daemon
   sleep 2
+  if mountpoint -q "$D" && [ -n "$LOCAL" ]; then
+    cp -rn "$LOCAL"/. "$D"/                  # -n: nu suprascrie ce există deja pe Drive
+    notify-send -i folder-cloud "Drive Screening" \
+      "Fișierele salvate doar pe laptop au fost urcate pe Drive. O copie a rămas în $LOCAL"
+  fi
   if mountpoint -q "$D"; then
     notify-send -i folder-cloud "Drive Screening" "Folderul de pe Google Drive a fost montat ✔"
   else
