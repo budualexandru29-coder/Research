@@ -8,26 +8,40 @@
 #  Presupune că rclone e deja configurat cu conexiunea «gdrive».
 # =====================================================================
 
+# Codul folderului de pe Google Drive (partea de după „/folders/” din link).
+# Schimbă-l dacă folosești alt folder, apoi rulează din nou acest script.
+FOLDER_ID="108AntHL5OzrD4OysSFPTgp1FtWcwV_uk"
+
 BIN="$HOME/.local/bin"
 APPS="$HOME/.local/share/applications"
 DESKTOP="$(xdg-user-dir DESKTOP 2>/dev/null || echo "$HOME/Desktop")"
 mkdir -p "$BIN" "$APPS" "$DESKTOP"
 
 # ---------- scriptul de montare ----------
-cat > "$BIN/monteaza-drive-screening.sh" <<'SCRIPT'
+cat > "$BIN/monteaza-drive-screening.sh" <<SCRIPT
 #!/bin/bash
+FOLDER_ID="$FOLDER_ID"
+SCRIPT
+cat >> "$BIN/monteaza-drive-screening.sh" <<'SCRIPT'
 D="$HOME/DriveScreening"
 mkdir -p "$D"
+# Dacă e montat ceva (poate tot Drive-ul), demontez și montez din nou doar folderul ales
 if mountpoint -q "$D"; then
-  notify-send -i folder-cloud "Drive Screening" "Folderul este deja montat."
-else
-  rclone mount gdrive: "$D" --vfs-cache-mode full --poll-interval 15s --daemon
+  fusermount3 -u "$D" 2>/dev/null || fusermount -u "$D" 2>/dev/null
+  if mountpoint -q "$D"; then
+    pkill -f "rclone mount gdrive:" ; sleep 3
+    fusermount3 -uz "$D" 2>/dev/null || fusermount -uz "$D" 2>/dev/null
+  fi
+fi
+if ! mountpoint -q "$D"; then
+  rclone mount gdrive: "$D" --drive-root-folder-id "$FOLDER_ID" \
+    --vfs-cache-mode full --poll-interval 15s --daemon
   sleep 2
   if mountpoint -q "$D"; then
     notify-send -i folder-cloud "Drive Screening" "Folderul de pe Google Drive a fost montat ✔"
   else
     notify-send -u critical -i dialog-error "Drive Screening" \
-      "Montarea a eșuat. Verifică internetul sau rulează în terminal: rclone mount gdrive: ~/DriveScreening"
+      "Montarea a eșuat. Verifică internetul sau rulează în terminal: ~/.local/bin/monteaza-drive-screening.sh"
     exit 1
   fi
 fi
