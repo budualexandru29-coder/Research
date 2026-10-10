@@ -61,7 +61,30 @@ Se deschide în browser. Oprire: `Ctrl + C` în terminal.
 3. **Tab 3 – Conflicte**: arbitrul vede opiniile ambilor recenzori (cu motive și note) și decide.
 4. **Tab 4 – Rezultate**: statistică, cifre PRISMA, descărcare.
 
-## 4. Cum lucrați în echipă (alegeți o variantă)
+## 4. Lucru în echipă prin Google Drive (recomandat)
+
+**Coordonatorul (o singură dată):**
+1. Pune folderul `screening_R` (cu `app.R` și `porneste.R` în el) în folderul partajat de pe Google Drive.
+2. Partajează folderul cu colegii, cu drept de **Editor**.
+3. Pornește aplicația, lipește protocolul, salvează setările și importă articolele. Doar el face importul.
+
+**Fiecare colaborator (Windows / Mac):**
+1. Instalează **R** (cran.r-project.org) și **RStudio Desktop** (posit.co/download/rstudio-desktop).
+2. Instalează **Google Drive for Desktop**. În browser, pe folderul partajat: click dreapta → *Organize → Add shortcut to Drive*, ca să apară pe calculator.
+3. În File Explorer / Finder deschide `Google Drive → My Drive → folderul partajat → screening_R`, apoi deschide `porneste.R` cu RStudio.
+4. Apasă **Source** (sus, dreapta). Prima dată se instalează automat pachetul `shiny` (câteva minute).
+5. În aplicație: alege-ți **rolul** (Recenzor 1 / Recenzor 2 / Arbitru) și scrie-ți **numele**.
+
+Datele se salvează automat în folderul partajat, lângă `screening_R`. Fiecare rol scrie în fișierul lui, deci nu vă încurcați.
+
+**Pe Linux (Fedora)**, după ce folderul de Drive e montat cu rclone:
+```bash
+Rscript "$HOME/DriveScreening/NumeleFolderului/screening_R/porneste.R"
+```
+
+**Actualizarea aplicației:** coordonatorul descarcă noul ZIP de pe GitHub și înlocuiește doar folderul `screening_R` de pe Drive. Datele nu se pierd (stau în afara lui).
+
+## 4b. Alte variante de lucru în echipă
 
 - **A. Aceeași rețea Wi-Fi (cel mai simplu)**: o persoană pornește aplicația așa:
   ```bash
