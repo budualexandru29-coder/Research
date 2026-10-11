@@ -73,9 +73,9 @@ Se deschide în browser. Oprire: `Ctrl + C` în terminal.
 **Fiecare colaborator pe Windows:**
 1. Instalează **R** de pe https://cran.r-project.org/bin/windows/base/ (Next, Next, Finish).
 2. Instalează **Google Drive for Desktop**; în browser, pe folderul partajat: click dreapta → *Organize → Add shortcut to Drive*.
-3. Copiază folderul `screening_R` **pe calculator** (ex. în *Documents*), NU îl rula direct din Google Drive.
+3. Copiază folderul `screening_R` **pe Desktop** (NU îl rula direct din Google Drive).
 4. În `screening_R\windows` dă dublu-click pe **`Creeaza_iconita_pe_Desktop.bat`** (o singură dată).
-5. Pornește din iconița **„Porneste Screening”**. La prima pornire se deschide o fereastră: alege folderul **Screening** de pe Google Drive (de obicei `Google Drive (G:) → My Drive → Screening`). Alegerea se ține minte; datele se salvează acolo.
+5. Pornește din iconița **„Porneste Screening”**. Aplicația găsește singură folderul **Screening** de pe Google Drive (`G:\My Drive\Screening`) și salvează datele acolo. Dacă nu-l găsește, se deschide o fereastră în care îl alegi (o singură dată).
 6. Pentru a alege alt folder: dublu-click pe `windows\Schimba_folderul_Drive.bat`.
 
 > Dacă Windows afișează „Windows protected your PC”, apasă *More info → Run anyway* (fișierele .bat nu sunt semnate digital).
