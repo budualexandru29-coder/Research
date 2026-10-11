@@ -9,6 +9,8 @@
 #  pe Google Drive, toată echipa lucrează automat pe aceleași date.
 # =====================================================================
 
+cat("porneste.R a pornit (", R.version.string, ")\n", sep = "")
+
 # Folderul în care se află acest fișier (adică folderul «screening_R»)
 aici <- local({
   f <- tryCatch(sys.frame(1)$ofile, error = function(e) NULL)
