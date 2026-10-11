@@ -908,6 +908,11 @@ server <- function(input, output, session) {
 
   output$avertisment_drive <- renderUI({
     invalidateLater(20000)
+    if (Sys.getenv("SCREENING_LOCAL") == "1")
+      return(div(class = "alert alert-danger", style = "margin:0 0 10px 0",
+        strong("⚠ Datele se salvează DOAR pe acest calculator, NU pe Google Drive "), "(", code(DIR_BAZA), "). ",
+        "Închide aplicația și pornește ", strong("screening_R\\windows\\Schimba_folderul_Drive.bat"),
+        " ca să alegi folderul Screening de pe Google Drive."))
     if (!drive_nemontat(DIR_BAZA)) return(NULL)
     div(class = "alert alert-danger", style = "margin:0 0 10px 0",
         strong("⚠ Google Drive NU este montat. "),

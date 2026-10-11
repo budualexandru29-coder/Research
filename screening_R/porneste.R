@@ -65,9 +65,34 @@ cauta_folder_drive <- function() {
   } else if (Sys.info()[["sysname"]] == "Darwin") {
     radacini <- Sys.glob(path.expand("~/Library/CloudStorage/GoogleDrive-*/*"))
   }
+  radacini <- radacini[dir.exists(radacini)]
+  if (!length(radacini)) return(NA)
+  # 1. direct în My Drive
   cand <- file.path(radacini, NUME_FOLDER_DRIVE)
   cand <- cand[dir.exists(cand)]
+  # 2. un nivel mai jos (ex. My Drive/Facultate/Screening)
+  if (!length(cand)) {
+    sub1 <- as.character(unlist(lapply(radacini, list.dirs, recursive = FALSE)))
+    cand <- file.path(sub1, NUME_FOLDER_DRIVE)
+    cand <- cand[dir.exists(cand)]
+  }
   if (length(cand)) normalizePath(cand[1], winslash = "/") else NA
+}
+
+# Fereastra Windows de alegere a unui folder (prin PowerShell; merge și din fereastra neagră)
+alege_folder_windows <- function() {
+  ps <- paste(
+    "Add-Type -AssemblyName System.Windows.Forms;",
+    "$f = New-Object System.Windows.Forms.FolderBrowserDialog;",
+    "$f.Description = 'Alege folderul Screening de pe Google Drive (de obicei G: - My Drive - Screening)';",
+    "$w = New-Object System.Windows.Forms.Form; $w.TopMost = $true;",
+    "if ($f.ShowDialog($w) -eq [System.Windows.Forms.DialogResult]::OK) {",
+    "[Console]::OutputEncoding = [Text.Encoding]::UTF8; Write-Output $f.SelectedPath }")
+  out <- tryCatch(suppressWarnings(system2("powershell",
+           c("-NoProfile", "-STA", "-ExecutionPolicy", "Bypass", "-Command", shQuote(ps, type = "cmd")),
+           stdout = TRUE, stderr = FALSE)), error = function(e) character(0))
+  out <- trimws(out[nzchar(trimws(out))])
+  if (length(out)) gsub("\\\\", "/", out[length(out)]) else NA
 }
 
 if (!nzchar(Sys.getenv("SCREENING_DIR"))) {
@@ -79,8 +104,8 @@ if (!nzchar(Sys.getenv("SCREENING_DIR"))) {
   if (!folder_valid(ales) && .Platform$OS.type == "windows") {
     message("\n>>> Alege în fereastra care s-a deschis folderul «Screening» de pe Google Drive")
     message(">>> (de obicei: Google Drive (G:) -> My Drive -> Screening).")
-    message(">>> Dacă nu vezi fereastra, caut-o în spatele celorlalte ferestre.\n")
-    ales <- utils::choose.dir(caption = "Alege folderul «Screening» de pe Google Drive")
+    message(">>> Dacă nu vezi fereastra, caut-o în spatele celorlalte ferestre (bara de jos).\n")
+    ales <- alege_folder_windows()
   }
   if (folder_valid(ales) && .Platform$OS.type == "windows") {   # țin minte alegerea
     dir.create(dirname(fisier_config), recursive = TRUE, showWarnings = FALSE)
@@ -88,8 +113,10 @@ if (!nzchar(Sys.getenv("SCREENING_DIR"))) {
   }
   if (!folder_valid(ales)) {
     ales <- dirname(aici)
-    if (.Platform$OS.type == "windows")
+    if (.Platform$OS.type == "windows") {
       message("ATENȚIE: nu ai ales niciun folder; datele se salvează local, NU pe Google Drive.")
+      Sys.setenv(SCREENING_LOCAL = "1")      # aplicația afișează un avertisment roșu
+    }
   }
   Sys.setenv(SCREENING_DIR = ales)
 }
