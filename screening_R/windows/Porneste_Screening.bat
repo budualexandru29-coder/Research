@@ -29,7 +29,7 @@ echo.
 echo  Test R:
 "%RSCRIPT%" --no-init-file -e "cat('   R functioneaza:', R.version.string, '\n')"
 echo.
-"%RSCRIPT%" --no-init-file "porneste.R"
+"%RSCRIPT%" --no-init-file "porneste.R" %*
 set "COD=%errorlevel%"
 echo.
 echo  Aplicatia s-a oprit (cod %COD%).

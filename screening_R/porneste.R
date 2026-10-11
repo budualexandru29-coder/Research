@@ -36,9 +36,39 @@ if (!requireNamespace("shiny", quietly = TRUE)) {
   install.packages("shiny", lib = lib, repos = "https://cloud.r-project.org")
 }
 
-# Unde se salvează datele: folderul de deasupra lui «screening_R»
-# (dacă variabila SCREENING_DIR e deja setată, se folosește aceea)
-if (!nzchar(Sys.getenv("SCREENING_DIR"))) Sys.setenv(SCREENING_DIR = dirname(aici))
+# ---------------------------------------------------------------------
+# Unde se salvează datele
+#  1. variabila SCREENING_DIR, dacă e setată (ex. de iconița de pe Linux)
+#  2. folderul ales anterior (ținut minte în fișierul de configurare)
+#  3. pe Windows: la prima pornire se deschide o fereastră în care alegi
+#     folderul «Screening» de pe Google Drive
+#  4. altfel: folderul de deasupra lui «screening_R»
+# Pornit cu argumentul «alege-folder», fereastra de alegere apare din nou.
+# ---------------------------------------------------------------------
+fisier_config <- file.path(tools::R_user_dir("screening", "config"), "folder_date.txt")
+realege <- "alege-folder" %in% commandArgs(trailingOnly = TRUE)
+
+folder_valid <- function(d) length(d) == 1 && !is.na(d) && nzchar(d) && dir.exists(d) && file.access(d, 2) == 0
+
+if (!nzchar(Sys.getenv("SCREENING_DIR"))) {
+  ales <- if (!realege && file.exists(fisier_config)) readLines(fisier_config, warn = FALSE, encoding = "UTF-8")[1] else NA
+  if (!folder_valid(ales) && .Platform$OS.type == "windows") {
+    message("\n>>> Alege în fereastra care s-a deschis folderul «Screening» de pe Google Drive")
+    message(">>> (de obicei: Google Drive (G:) -> My Drive -> Screening).")
+    message(">>> Dacă nu vezi fereastra, caut-o în spatele celorlalte ferestre.\n")
+    ales <- utils::choose.dir(caption = "Alege folderul «Screening» de pe Google Drive")
+    if (folder_valid(ales)) {
+      dir.create(dirname(fisier_config), recursive = TRUE, showWarnings = FALSE)
+      writeLines(ales, fisier_config, useBytes = TRUE)
+    }
+  }
+  if (!folder_valid(ales)) {
+    ales <- dirname(aici)
+    if (.Platform$OS.type == "windows")
+      message("ATENȚIE: nu ai ales niciun folder; datele se salvează local, NU pe Google Drive.")
+  }
+  Sys.setenv(SCREENING_DIR = ales)
+}
 message("Datele se salvează în: ", Sys.getenv("SCREENING_DIR"))
 
 # Deschide browserul (pe Linux prin xdg-open, care merge sigur și din terminal)

@@ -71,11 +71,12 @@ Se deschide în browser. Oprire: `Ctrl + C` în terminal.
 3. Pornește aplicația, lipește protocolul, salvează setările și importă articolele. Doar el face importul.
 
 **Fiecare colaborator pe Windows:**
-1. Instalează **R** de pe https://cran.r-project.org/bin/windows/base/ (Next, Next, Finish). RStudio nu e necesar.
-2. Instalează **Google Drive for Desktop**. În browser, pe folderul partajat: click dreapta → *Organize → Add shortcut to Drive*, ca să apară pe calculator.
-3. În File Explorer deschide `Google Drive → My Drive → folderul partajat → screening_R → windows` și dă dublu-click pe **`Creeaza_iconita_pe_Desktop.bat`** (o singură dată).
-4. De acum pornești aplicația cu dublu-click pe iconița **„Porneste Screening”** de pe Desktop. Prima dată durează câteva minute (se instalează pachetul `shiny`). Fereastra neagră trebuie să rămână deschisă cât lucrezi.
-5. În aplicație: alege-ți **rolul** (Recenzor 1 / Recenzor 2 / Arbitru) și scrie-ți **numele**.
+1. Instalează **R** de pe https://cran.r-project.org/bin/windows/base/ (Next, Next, Finish).
+2. Instalează **Google Drive for Desktop**; în browser, pe folderul partajat: click dreapta → *Organize → Add shortcut to Drive*.
+3. Copiază folderul `screening_R` **pe calculator** (ex. în *Documents*), NU îl rula direct din Google Drive.
+4. În `screening_R\windows` dă dublu-click pe **`Creeaza_iconita_pe_Desktop.bat`** (o singură dată).
+5. Pornește din iconița **„Porneste Screening”**. La prima pornire se deschide o fereastră: alege folderul **Screening** de pe Google Drive (de obicei `Google Drive (G:) → My Drive → Screening`). Alegerea se ține minte; datele se salvează acolo.
+6. Pentru a alege alt folder: dublu-click pe `windows\Schimba_folderul_Drive.bat`.
 
 > Dacă Windows afișează „Windows protected your PC”, apasă *More info → Run anyway* (fișierele .bat nu sunt semnate digital).
 
