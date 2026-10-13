@@ -111,7 +111,18 @@ bash linux/instaleaza_scurtaturi.sh
   Fiecare rol scrie într-un fișier separat, deci nu apar conflicte de sincronizare.
 - **C. Un singur calculator**: pe rând, fiecare își alege rolul.
 
-## 5. Unde sunt datele
+## 5. Roluri, jurnal, orbire (de citit de toată echipa)
+
+- **Rolurile sunt legate de nume.** La prima decizie, rolul (Recenzor 1 / Recenzor 2 / Arbitru) se leagă de numele scris în bara de sus. Altcineva nu mai poate salva decizii în acel rol, iar aplicația afișează un avertisment roșu dacă rolul ales aparține altcuiva. Rolul implicit este gol: fiecare trebuie să-și aleagă rolul. Un rol se poate elibera din tab-ul 1 (rămâne notat în jurnal).
+- **Jurnalul deciziilor** (`jurnal_decizii.csv`): fiecare decizie, inclusiv schimbările, se adaugă cu dată și oră; nimic nu se șterge. Se descarcă din tab-ul 4.
+- **Salvarea este verificată.** După fiecare decizie, aplicația recitește fișierul. Dacă salvarea eșuează (ex. Google Drive blochează fișierul), recenzorul vede un mesaj „Decizia NU a fost salvată” și nu trece mai departe.
+- **Decizii schimbate după arbitraj:** conflictul reapare la arbitru, marcat „de reverificat”.
+- **Orbirea se bazează pe încredere.** Recenzorii nu văd în aplicație deciziile celuilalt, conflictele sau rezultatele, dar fișierele de pe Drive pot fi deschise de oricine are acces. Scrieți asta explicit în protocol.
+- **Kappa Cohen** este raportat pe 3 categorii (inclus/exclus/nesigur) și pe 2 categorii (inclus/exclus, fără NESIGUR). Precizați în articol varianta raportată.
+- **Textul integral (full-text):** aplicația acoperă etapa de titlu și abstract. Pentru full-text creați un screening nou și importați RIS-ul cu articolele incluse; cifrele PRISMA de la full-text (ex. articole care nu au putut fi obținute) se notează separat.
+- **Windows:** e nevoie de **R 4.2 sau mai nou** (altfel diacriticele pot da erori). Fișierul de pornire verifică singur versiunea.
+
+## 6. Unde sunt datele
 
 În folderul `date_screening/` (creat automat):
 
@@ -120,6 +131,8 @@ bash linux/instaleaza_scurtaturi.sh
 | `articole.csv` | articolele unice importate |
 | `decizii_R1.csv`, `decizii_R2.csv` | deciziile recenzorilor (decizie, motiv, notă, nume, dată/oră) |
 | `decizii_ARB.csv` | deciziile arbitrului |
+| `jurnal_decizii.csv` | toate deciziile, în ordine, cu dată și oră (nu se șterge nimic) |
+| `roluri.csv` | ce nume are fiecare rol |
 | `setari.rds` | motive de excludere, cuvinte-cheie, numărători PRISMA |
 
 Fă periodic o copie de siguranță a acestui folder. Pentru a începe un proiect nou, mută/șterge folderul.

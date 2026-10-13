@@ -88,7 +88,13 @@ scrie_csv <- function(d, f) {
   con <- file(tmp, "a", encoding = "UTF-8")
   write.table(d, con, sep = ",", row.names = FALSE, qmethod = "double")
   close(con)
-  file.rename(tmp, f)
+  if (!file.rename(tmp, f)) {               # pe Windows, Google Drive poate bloca fișierul
+    ok <- file.copy(tmp, f, overwrite = TRUE)
+    unlink(tmp)
+    if (!ok) stop("nu am putut scrie fișierul ", basename(f),
+                  " (poate e blocat de sincronizarea Google Drive)")
+  }
+  invisible(TRUE)
 }
 
 citeste_setari <- function(dir) {
@@ -100,14 +106,102 @@ citeste_setari <- function(dir) {
   s
 }
 
+# Jurnalul deciziilor: fiecare decizie se ADAUGĂ la final, nimic nu se șterge.
+# Din el se poate reconstitui oricând cine a decis ce și când.
+F_JURNAL   <- function(dir) file.path(dir, "jurnal_decizii.csv")
+COL_JURNAL <- c("data", "rol", "nume", "id", "decizie", "motiv", "nota")
+
+adauga_jurnal <- function(dir, rand) {
+  f <- F_JURNAL(dir)
+  nou <- !file.exists(f)
+  if (nou) { con <- file(f, "wb"); writeBin(as.raw(c(0xef, 0xbb, 0xbf)), con); close(con) }
+  con <- file(f, "a", encoding = "UTF-8")
+  on.exit(close(con))
+  write.table(rand[, COL_JURNAL], con, sep = ",", row.names = FALSE, col.names = nou, qmethod = "double")
+}
+
+# Repetă o operație de câteva ori (Google Drive poate bloca temporar fișierele)
+cu_reincercari <- function(f, ce, n = 3) {
+  eroare <- ""
+  for (k in seq_len(n)) {
+    ok <- tryCatch({ f(); TRUE }, error = function(e) { eroare <<- conditionMessage(e); FALSE })
+    if (ok) return(invisible(TRUE))
+    Sys.sleep(1)
+  }
+  stop(ce, ": ", eroare)
+}
+
+# Salvează o decizie: (1) o adaugă în jurnal, (2) actualizează fișierul cu deciziile
+# curente ale rolului, (3) recitește fișierul ca să verifice că s-a salvat.
+# Dacă ceva eșuează, oprește cu eroare (iar aplicația îi arată recenzorului mesajul).
 salveaza_decizie <- function(dir, rol, id, decizie, motiv, nota, nume) {
-  d <- citeste_csv(F_DEC(dir, rol), COL_DEC)
-  d <- d[d$id != id, , drop = FALSE]
-  d <- rbind(d, data.frame(id = id, decizie = decizie, motiv = motiv,
-                           nota = nota, nume = nume,
-                           data = format(Sys.time(), "%Y-%m-%d %H:%M:%S"),
-                           stringsAsFactors = FALSE))
-  scrie_csv(d, F_DEC(dir, rol))
+  acum <- format(Sys.time(), "%Y-%m-%d %H:%M:%S")
+  cu_reincercari(function()
+    adauga_jurnal(dir, data.frame(data = acum, rol = rol, nume = nume, id = id, decizie = decizie,
+                                  motiv = motiv, nota = nota, stringsAsFactors = FALSE)),
+    "nu am putut scrie în jurnalul deciziilor")
+  tryCatch(cu_reincercari(function() {
+    d <- citeste_csv(F_DEC(dir, rol), COL_DEC)
+    d <- d[d$id != id, , drop = FALSE]
+    d <- rbind(d, data.frame(id = id, decizie = decizie, motiv = motiv, nota = nota, nume = nume,
+                             data = acum, stringsAsFactors = FALSE))
+    scrie_csv(d, F_DEC(dir, rol))
+    v <- citeste_csv(F_DEC(dir, rol), COL_DEC)
+    if (!any(v$id == id & v$decizie == decizie & v$data == acum))
+      stop("verificarea după salvare a eșuat")
+  }, "nu am putut salva decizia"), error = function(e) {
+    try(adauga_jurnal(dir, data.frame(data = format(Sys.time(), "%Y-%m-%d %H:%M:%S"), rol = rol, nume = nume,
+                                      id = id, decizie = "EROARE LA SALVARE", motiv = "",
+                                      nota = conditionMessage(e), stringsAsFactors = FALSE)), silent = TRUE)
+    stop(conditionMessage(e))
+  })
+  invisible(TRUE)
+}
+
+# ---------------------------------------------------------------------
+# 2a. ROLURI: fiecare rol e legat de un singur nume, în fiecare screening
+# ---------------------------------------------------------------------
+F_ROLURI <- function(dir) file.path(dir, "roluri.csv")
+eticheta_rol <- function(rol) names(ROLURI)[match(rol, ROLURI)]
+citeste_roluri <- function(dir) citeste_csv(F_ROLURI(dir), c("rol", "nume", "data"))
+acelasi_nume <- function(a, b) tolower(trimws(a)) == tolower(trimws(b))
+
+# NULL dacă numele poate lucra în rolul dat; altfel textul problemei
+problema_rol <- function(dir, rol, nume) {
+  r <- citeste_roluri(dir)
+  x <- r[r$rol == rol, , drop = FALSE]
+  if (nrow(x)) {
+    if (acelasi_nume(x$nume[1], nume)) return(NULL)
+    return(sprintf("Rolul «%s» îi aparține lui %s în acest screening. Verifică rolul ales în bara de sus.",
+                   eticheta_rol(rol), x$nume[1]))
+  }
+  y <- r[acelasi_nume(r$nume, nume), , drop = FALSE]
+  if (nrow(y))
+    return(sprintf("Numele «%s» are deja rolul «%s» în acest screening. Alege acel rol în bara de sus.",
+                   nume, eticheta_rol(y$rol[1])))
+  NULL
+}
+
+# Leagă rolul de nume (la prima decizie). Oprește cu eroare dacă rolul e al altcuiva.
+leaga_rol <- function(dir, rol, nume) {
+  pr <- problema_rol(dir, rol, nume)
+  if (!is.null(pr)) stop(pr)
+  r <- citeste_roluri(dir)
+  if (!any(r$rol == rol)) {
+    r <- rbind(r, data.frame(rol = rol, nume = trimws(nume), data = format(Sys.time(), "%Y-%m-%d %H:%M"),
+                             stringsAsFactors = FALSE))
+    cu_reincercari(function() scrie_csv(r, F_ROLURI(dir)), "nu am putut salva rolul")
+  }
+  invisible(TRUE)
+}
+
+elibereaza_rol <- function(dir, rol, cine) {
+  r <- citeste_roluri(dir)
+  vechi <- r$nume[r$rol == rol]
+  cu_reincercari(function() scrie_csv(r[r$rol != rol, , drop = FALSE], F_ROLURI(dir)), "nu am putut elibera rolul")
+  adauga_jurnal(dir, data.frame(data = format(Sys.time(), "%Y-%m-%d %H:%M:%S"), rol = rol, nume = cine, id = "",
+                                decizie = "ROL ELIBERAT", motiv = "", nota = paste("rolul îi aparținea lui", vechi),
+                                stringsAsFactors = FALSE))
 }
 
 # ---------------------------------------------------------------------
@@ -164,7 +258,7 @@ rezumat_proiect <- function(dir) {
   t <- combina(D)
   c(Articole = nrow(a),
     "Recenzor 1" = sum(nzchar(t$R1)), "Recenzor 2" = sum(nzchar(t$R2)),
-    "Conflicte nerezolvate" = sum(t$stare == "conflict" & !nzchar(t$ARB)),
+    "Conflicte nerezolvate" = sum(t$stare == "conflict" & !t$rezolvat),
     Incluse = sum(t$final == "include"))
 }
 
@@ -313,16 +407,23 @@ detecteaza_baza <- function(cale, nume) {
 # Adaugă articole noi, eliminând duplicatele (același DOI sau același titlu).
 # Un duplicat nu se pierde: baza lui de date se adaugă la articolul deja existent
 # (ex. „PubMed; Scopus”), iar câmpurile goale (abstract, DOI...) se completează din el.
+# DOI fără prefixe („https://doi.org/”, „doi:”), cu litere mici
+curata_doi <- function(x) {
+  x <- trimws(tolower(x))
+  x <- sub("^https?://(dx\\.)?doi\\.org/", "", x)
+  sub("^doi:\\s*", "", x)
+}
+
 cheie_titlu <- function(t) gsub("[^a-z0-9]", "", tolower(iconv(t, to = "ASCII//TRANSLIT", sub = "")))
 
 adauga_articole <- function(noi, existente) {
   noi[] <- lapply(noi, function(x) { x[is.na(x)] <- ""; trimws(x) })
-  noi$doi <- tolower(sub("^https?://(dx\\.)?doi\\.org/", "", noi$doi))
+  noi$doi <- curata_doi(noi$doi)
   goale <- !(nzchar(noi$titlu) | nzchar(noi$abstract))
   noi <- noi[!goale, , drop = FALSE]
   noi$id <- ""
   V <- as.list(rbind(existente[, COL_ART], noi[, COL_ART]))
-  kd <- tolower(V$doi)
+  kd <- curata_doi(V$doi)
   kt <- cheie_titlu(V$titlu)
   dupa_doi <- new.env(hash = TRUE)
   dupa_titlu <- new.env(hash = TRUE)
@@ -386,7 +487,7 @@ combina <- function(D) {
   for (rol in c("R1", "R2", "ARB")) {
     d <- D[[rol]]
     m <- match(a$id, d$id)
-    for (c in c("decizie", "motiv", "nota", "nume")) {
+    for (c in c("decizie", "motiv", "nota", "nume", "data")) {
       v <- d[[c]][m]; v[is.na(v)] <- ""
       a[[if (c == "decizie") rol else paste0(rol, "_", c)]] <- v
     }
@@ -394,8 +495,13 @@ combina <- function(D) {
   ambii <- nzchar(a$R1) & nzchar(a$R2)
   acord <- ambii & a$R1 == a$R2 & a$R1 != "maybe"
   a$stare <- ifelse(!ambii, "neterminat", ifelse(acord, "acord", "conflict"))
+  # Decizia arbitrului e valabilă doar dacă e mai nouă decât deciziile recenzorilor;
+  # dacă un recenzor și-a schimbat decizia după aceea, conflictul trebuie reverificat.
+  arb_valid <- nzchar(a$ARB) & a$ARB_data >= pmax(a$R1_data, a$R2_data)
+  a$rezolvat <- a$stare == "conflict" & arb_valid
+  a$de_reverificat <- a$stare == "conflict" & nzchar(a$ARB) & !arb_valid
   a$final <- ifelse(a$stare == "acord", a$R1,
-                    ifelse(a$stare == "conflict", a$ARB, ""))
+                    ifelse(a$rezolvat, a$ARB, ""))
   a$motiv_final <- ifelse(a$final != "exclude", "",
                           ifelse(a$stare == "acord",
                                  ifelse(nzchar(a$R1_motiv), a$R1_motiv, a$R2_motiv),
@@ -599,10 +705,11 @@ ui <- navbarPage(
   header = tagList(
     tags$head(tags$style(HTML(CSS)), tags$script(HTML(JS))),
     uiOutput("avertisment_drive"),
+    uiOutput("avertisment_rol"),
     div(class = "bara-rol",
         fluidRow(
           column(3, selectInput("proiect", "Screening-ul la care lucrez", choices = NULL)),
-          column(2, selectInput("rol", "Rolul meu", ROLURI)),
+          column(2, selectInput("rol", "Rolul meu", c("— alege rolul —" = "", ROLURI))),
           column(2, textInput("nume", "Numele meu", placeholder = "ex. Ana Popescu")),
           column(5, uiOutput("progres_scurt"))
         ))
@@ -685,7 +792,17 @@ ui <- navbarPage(
                       rows = 2, placeholder = "ex. diabet*, metformin, randomi*"),
         textAreaInput("kw_exc_txt", "Cuvinte-cheie de evidențiat cu ROȘU (criterii de excludere)",
                       rows = 2, placeholder = "ex. mice, rat*, in vitro, review"),
-        actionButton("b_setari", "Salvează setările", class = "btn-primary")
+        actionButton("b_setari", "Salvează setările", class = "btn-primary"),
+        hr(),
+        h3("Cine are ce rol"),
+        p(class = "scurtaturi", "La prima decizie, fiecare rol se leagă de numele celui care l-a folosit. ",
+          "Altcineva nu mai poate salva decizii în acel rol (așa nu se suprascriu deciziile din greșeală). ",
+          "Dacă un rol trebuie preluat de altă persoană, eliberează-l aici (rămâne notat în jurnal)."),
+        tableOutput("tabel_roluri"),
+        fluidRow(
+          column(7, selectInput("rol_eliberat", NULL, choices = c("— alege rolul —" = "", ROLURI), width = "100%")),
+          column(5, actionButton("b_elibereaza", "Eliberează rolul", width = "100%"))
+        )
       )
     )
   ),
@@ -696,7 +813,10 @@ ui <- navbarPage(
       div(class = "alert alert-info",
           "Ești arbitru: tu nu faci screening-ul inițial. Mergi la tab-ul «3. Conflicte» ",
           "după ce recenzorii au terminat (sau pe parcurs).")),
-    conditionalPanel("input.rol != 'ARB'",
+    conditionalPanel("input.rol == ''",
+      div(class = "alert alert-warning",
+          "Alege-ți întâi rolul (Recenzor 1 sau Recenzor 2) și scrie-ți numele în bara de sus.")),
+    conditionalPanel("input.rol == 'R1' || input.rol == 'R2'",
       fluidRow(
         column(8, uiOutput("articol")),
         column(4,
@@ -776,6 +896,7 @@ ui <- navbarPage(
       hr(),
       h3("Descarcă"),
       downloadButton("d_tot", "Toate articolele + toate deciziile (CSV)"),
+      downloadButton("d_jurnal", "Jurnalul complet al deciziilor (CSV)"),
       downloadButton("d_inc_csv", "Doar articolele INCLUSE (CSV)"),
       downloadButton("d_inc_ris", "Doar articolele INCLUSE (RIS → Zotero/Mendeley)"),
       br(), br()
@@ -812,6 +933,26 @@ ui <- navbarPage(
       tags$ul(
         tags$li("Ambii INCLUS → inclus. Ambii EXCLUS → exclus."),
         tags$li("Decizii diferite sau cel puțin un NESIGUR → conflict → decide arbitrul.")
+      ),
+      h3("Roluri, jurnal și orbire"),
+      tags$ul(
+        tags$li("La prima decizie, fiecare rol se leagă de numele persoanei. Altcineva nu mai poate salva în acel rol ",
+                "(rolul se poate elibera din tab-ul «1. Import & setări»)."),
+        tags$li("Fiecare decizie (și fiecare schimbare de decizie) se adaugă în ", code("jurnal_decizii.csv"),
+                ", cu dată și oră; nimic nu se șterge. Jurnalul se descarcă din tab-ul «4. Rezultate»."),
+        tags$li("Dacă un recenzor își schimbă decizia după ce arbitrul a rezolvat conflictul, conflictul apare din nou ",
+                "la arbitru, marcat «de reverificat»."),
+        tags$li(strong("Orbirea se bazează pe încredere: "), "aplicația nu le arată recenzorilor deciziile celuilalt, ",
+                "conflictele sau rezultatele, dar fișierele de pe Google Drive pot fi deschise de oricine are acces. ",
+                "Scrieți asta explicit în protocol.")
+      ),
+      h3("De menționat în articol"),
+      tags$ul(
+        tags$li("Aplicația raportează kappa Cohen în două variante: pe 3 categorii (inclus / exclus / nesigur) și ",
+                "pe 2 categorii (inclus / exclus, fără articolele marcate NESIGUR). Precizați în articol pe care îl raportați."),
+        tags$li("Aplicația acoperă etapa de titlu și abstract. Pentru textul integral, creați un screening nou și ",
+                "importați fișierul RIS cu articolele incluse. Cifrele PRISMA de la textul integral ",
+                "(ex. articole care nu au putut fi obținute) se notează separat.")
       ),
       h3("Unde sunt datele"),
       p("Fiecare screening se salvează automat într-un folder cu numele lui, în ", code(DIR_BAZA),
@@ -901,6 +1042,8 @@ server <- function(input, output, session) {
     p <- proiecte(); semnal()
     if (!length(p)) return(data.frame(Mesaj = "Încă nu ai niciun screening. Creează unul în dreapta."))
     r <- t(sapply(p, rezumat_proiect))
+    if (!identical(input$rol, "ARB"))           # orbire: recenzorii nu văd conflictele / rezultatele
+      r <- r[, c("Articole", "Recenzor 1", "Recenzor 2"), drop = FALSE]
     data.frame(Screening = names(p), r, "Ultima modificare" =
                  format(as.POSIXct(sapply(p, ultima_modificare), origin = "1970-01-01"), "%Y-%m-%d %H:%M"),
                check.names = FALSE)
@@ -945,7 +1088,7 @@ server <- function(input, output, session) {
   art    <- reactive(date()$art)
   tabel  <- reactive(combina(date()))
   deciziile_mele <- reactive({
-    if (input$rol == "ARB") NULL else date()[[input$rol]]
+    if (!(input$rol %in% c("R1", "R2"))) NULL else date()[[input$rol]]
   })
 
   verifica_nume <- function() {
@@ -972,9 +1115,12 @@ server <- function(input, output, session) {
     s$protocol <- input$protocol_txt
     s$kw_inc <- input$kw_inc_txt
     s$kw_exc <- input$kw_exc_txt
-    saveRDS(s, F_SET(dir_p()))
-    versiune(versiune() + 1)
-    showNotification("Setările au fost salvate.", type = "message")
+    tryCatch({
+      cu_reincercari(function() saveRDS(s, F_SET(dir_p())), "nu am putut salva setările")
+      versiune(versiune() + 1)
+      showNotification("Setările au fost salvate.", type = "message")
+    }, error = function(e) showModal(modalDialog(title = "⚠ Setările NU au fost salvate",
+                                                 conditionMessage(e), easyClose = TRUE)))
   })
 
   observe({
@@ -1131,9 +1277,10 @@ server <- function(input, output, session) {
   output$progres_scurt <- renderUI({
     a <- art(); n <- nrow(a)
     if (!n) return(div(class = "prog", "Niciun articol importat încă → tab-ul «1. Import & setări»."))
+    if (!nzchar(input$rol)) return(div(class = "prog", "Alege-ți rolul și scrie-ți numele."))
     if (input$rol == "ARB") {
       t <- tabel()
-      nc <- sum(t$stare == "conflict"); nr <- sum(t$stare == "conflict" & !nzchar(t$ARB))
+      nc <- sum(t$stare == "conflict"); nr <- sum(t$stare == "conflict" & !t$rezolvat)
       return(div(class = "prog",
                  sprintf("Recenzor 1: %d/%d  ·  Recenzor 2: %d/%d  ·  Conflicte: %d (nerezolvate: %d)",
                          sum(nzchar(t$R1)), n, sum(nzchar(t$R2)), n, nc, nr)))
@@ -1161,7 +1308,7 @@ server <- function(input, output, session) {
   }
 
   observeEvent(list(input$rol, dir_p()), {
-    if (input$rol == "ARB") return()
+    if (!(input$rol %in% c("R1", "R2"))) return()
     i <- urmatorul_neevaluat(0, isolate(deciziile_mele()))
     idx(if (is.na(i)) 1 else i)
   })
@@ -1192,14 +1339,61 @@ server <- function(input, output, session) {
     updateTextAreaInput(session, "nota", value = if (are) r$nota[1] else "")
   })
 
+  # Salvează decizia: verifică rolul, salvează (cu jurnal și verificare) și arată clar orice eroare.
+  salveaza_sigur <- function(rol, id, dec, motiv, nota) {
+    ok <- tryCatch({
+      leaga_rol(dir_p(), rol, trimws(input$nume))
+      salveaza_decizie(dir_p(), rol, id, dec, motiv, nota, trimws(input$nume))
+      TRUE
+    }, error = function(e) {
+      showModal(modalDialog(title = "⚠ Decizia NU a fost salvată",
+                            p(conditionMessage(e)),
+                            p("Verifică rolul și numele din bara de sus, conexiunea la Google Drive, apoi încearcă din nou."),
+                            easyClose = TRUE, footer = modalButton("Am înțeles")))
+      FALSE
+    })
+    if (ok) versiune(versiune() + 1)
+    ok
+  }
+
+  output$avertisment_rol <- renderUI({
+    semnal(); versiune()
+    d <- dir_p(); rol <- input$rol; nume <- trimws(input$nume)
+    if (is.null(d) || !nzchar(rol) || !nzchar(nume)) return(NULL)
+    pr <- problema_rol(d, rol, nume)
+    if (is.null(pr)) return(NULL)
+    div(class = "alert alert-danger", style = "margin:0 0 10px 0", strong("⚠ "), pr,
+        " Deciziile nu vor fi salvate până nu corectezi rolul sau numele.")
+  })
+
+  output$tabel_roluri <- renderTable({
+    semnal(); versiune()
+    d <- dir_p(); req(d)
+    r <- citeste_roluri(d)
+    if (!nrow(r)) return(data.frame(Rol = "—", Nume = "încă niciun rol folosit", "De la" = "", check.names = FALSE))
+    data.frame(Rol = eticheta_rol(r$rol), Nume = r$nume, "De la" = r$data, check.names = FALSE)
+  })
+
+  observeEvent(input$b_elibereaza, {
+    req(nzchar(input$rol_eliberat)); if (!cere_proiect() || !verifica_nume()) return()
+    showModal(modalDialog(title = "Eliberezi rolul?",
+      p("Rolul «", eticheta_rol(input$rol_eliberat), "» nu va mai fi legat de nicio persoană. ",
+        "Deciziile deja salvate rămân. Următoarea persoană care salvează o decizie în acest rol îl va prelua."),
+      footer = tagList(modalButton("Anulează"), actionButton("b_elibereaza_ok", "Eliberează", class = "btn-warning"))))
+  })
+  observeEvent(input$b_elibereaza_ok, {
+    tryCatch({
+      elibereaza_rol(dir_p(), input$rol_eliberat, trimws(input$nume))
+      removeModal(); versiune(versiune() + 1)
+      showNotification("Rolul a fost eliberat.", type = "message")
+    }, error = function(e) showNotification(conditionMessage(e), type = "error"))
+  })
+
   decide <- function(dec) {
-    if (input$rol == "ARB" || !cere_proiect() || !verifica_nume()) return()
+    if (!(input$rol %in% c("R1", "R2")) || !cere_proiect() || !verifica_nume()) return()
     a <- art(); if (!nrow(a)) return()
     i <- min(idx(), nrow(a))
-    salveaza_decizie(dir_p(), input$rol, a$id[i], dec,
-                     if (dec == "exclude") input$motiv else "",
-                     input$nota, trimws(input$nume))
-    versiune(versiune() + 1)
+    if (!salveaza_sigur(input$rol, a$id[i], dec, if (dec == "exclude") input$motiv else "", input$nota)) return()
     d <- citeste_csv(F_DEC(dir_p(), input$rol), COL_DEC)
     nxt <- urmatorul_neevaluat(i, d)
     if (is.na(nxt)) {
@@ -1227,7 +1421,7 @@ server <- function(input, output, session) {
   observe({
     t <- tabel()
     c <- t[t$stare == "conflict", , drop = FALSE]
-    if (isTRUE(input$doar_nerez)) c <- c[!nzchar(c$ARB), , drop = FALSE]
+    if (isTRUE(input$doar_nerez)) c <- c[!c$rezolvat, , drop = FALSE]
     if (!nrow(c)) {
       updateSelectInput(session, "conflict",
                         choices = c("Nu există conflicte de rezolvat în acest moment" = ""))
@@ -1235,7 +1429,8 @@ server <- function(input, output, session) {
     }
     alegeri <- setNames(c$id, sprintf("%s · %s · R1: %s / R2: %s%s",
                                       c$id, substr(c$titlu, 1, 80), et(c$R1), et(c$R2),
-                                      ifelse(nzchar(c$ARB), paste0("  → FINAL: ", et(c$ARB)), "")))
+                                      ifelse(c$rezolvat, paste0("  → FINAL: ", et(c$ARB)),
+                                             ifelse(c$de_reverificat, "  ⟳ DE REVERIFICAT (un recenzor și-a schimbat decizia)", ""))))
     sel <- isolate(input$conflict)
     if (is.null(sel) || !(sel %in% c$id)) sel <- c$id[1]
     updateSelectInput(session, "conflict", choices = alegeri, selected = sel)
@@ -1264,7 +1459,10 @@ server <- function(input, output, session) {
           if (nzchar(r[[paste0(rol, "_nota")]])) div(em("Notă: ", r[[paste0(rol, "_nota")]])))
     }
     tagList(opinie("R1", "Recenzor 1"), opinie("R2", "Recenzor 2"),
-            if (nzchar(r$ARB)) opinie("ARB", "Decizia ta (arbitru)"))
+            if (nzchar(r$ARB)) opinie("ARB", "Decizia ta (arbitru)"),
+            if (isTRUE(r$de_reverificat))
+              div(class = "alert alert-warning", "⟳ Un recenzor și-a schimbat decizia după ce ai decis. ",
+                  "Verifică din nou și salvează decizia finală."))
   })
 
   observeEvent(input$conflict, {
@@ -1279,9 +1477,7 @@ server <- function(input, output, session) {
     if (input$rol != "ARB" || !cere_proiect() || !verifica_nume()) return()
     id <- input$conflict
     if (is.null(id) || !nzchar(id)) return()
-    salveaza_decizie(dir_p(), "ARB", id, dec, if (dec == "exclude") input$a_motiv else "",
-                     input$a_nota, trimws(input$nume))
-    versiune(versiune() + 1)
+    if (!salveaza_sigur("ARB", id, dec, if (dec == "exclude") input$a_motiv else "", input$a_nota)) return()
     showNotification(sprintf("Decizie finală salvată pentru %s: %s", id, et(dec)), type = "message")
   }
   observeEvent(input$a_inc, decide_arbitru("include"))
@@ -1290,7 +1486,7 @@ server <- function(input, output, session) {
   # ---------- Tastatură ----------
   observeEvent(input$tasta, {
     k <- input$tasta$k
-    if (input$tab == "screening" && input$rol != "ARB") {
+    if (input$tab == "screening" && input$rol %in% c("R1", "R2")) {
       switch(k,
              i = decide("include"), e = decide("exclude"), n = decide("maybe"),
              arrowleft  = idx(max(1, idx() - 1)),
@@ -1306,6 +1502,9 @@ server <- function(input, output, session) {
     req(n)
     ambii <- t[t$stare != "neterminat", , drop = FALSE]
     k <- kappa_cohen(ambii$R1, ambii$R2)
+    fara_nes <- ambii[ambii$R1 != "maybe" & ambii$R2 != "maybe", , drop = FALSE]
+    k2 <- kappa_cohen(fara_nes$R1, fara_nes$R2)
+    proc <- function(x) if (length(x)) sprintf("%.1f%%", 100 * mean(x)) else "–"
     nconf <- sum(t$stare == "conflict")
     rand <- function(et, val) tags$tr(tags$td(et), tags$td(strong(val)))
     tagList(
@@ -1314,13 +1513,16 @@ server <- function(input, output, session) {
         rand("Evaluate de Recenzorul 2", sprintf("%d / %d", sum(nzchar(t$R2)), n)),
         rand("Evaluate de amândoi", nrow(ambii)),
         rand("Acord direct (ambii INCLUS sau ambii EXCLUS)",
-             sprintf("%d (%.1f%%)", sum(t$stare == "acord"), 100 * mean(ambii$R1 == ambii$R2 & ambii$R1 != "maybe"))),
-        rand("Acord brut (aceeași decizie, inclusiv NESIGUR)",
-             if (nrow(ambii)) sprintf("%.1f%%", 100 * mean(ambii$R1 == ambii$R2)) else "–"),
-        rand("Kappa Cohen", if (is.na(k)) "–" else sprintf("%.3f (%s)", k, interpreteaza_kappa(k))),
+             sprintf("%d (%s)", sum(t$stare == "acord"), proc(ambii$R1 == ambii$R2 & ambii$R1 != "maybe"))),
+        rand("Acord brut (aceeași decizie, inclusiv NESIGUR)", proc(ambii$R1 == ambii$R2)),
+        rand("Kappa Cohen – 3 categorii (inclus / exclus / nesigur)",
+             if (is.na(k)) "–" else sprintf("%.3f (%s)", k, interpreteaza_kappa(k))),
+        rand(sprintf("Kappa Cohen – 2 categorii (inclus / exclus; fără cele %d cu NESIGUR)", nrow(ambii) - nrow(fara_nes)),
+             if (is.na(k2)) "–" else sprintf("%.3f (%s)", k2, interpreteaza_kappa(k2))),
         rand("Conflicte", nconf),
-        rand("   – rezolvate de arbitru", sum(t$stare == "conflict" & nzchar(t$ARB))),
-        rand("   – încă nerezolvate", sum(t$stare == "conflict" & !nzchar(t$ARB))),
+        rand("   – rezolvate de arbitru", sum(t$rezolvat)),
+        rand("   – încă nerezolvate", sum(t$stare == "conflict" & !t$rezolvat)),
+        rand("   – dintre care de reverificat (recenzorul și-a schimbat decizia)", sum(t$de_reverificat)),
         rand("FINAL: INCLUSE (merg la full-text)", sum(t$final == "include")),
         rand("FINAL: EXCLUSE", sum(t$final == "exclude")),
         rand("În așteptare (neterminate / nerezolvate)", sum(!nzchar(t$final)))
@@ -1362,9 +1564,9 @@ server <- function(input, output, session) {
     for (c in c("R1", "R2", "ARB", "final")) t[[c]] <- et(t[[c]])
     t$final[!nzchar(t$final)] <- "ÎN AȘTEPTARE"
     t[, c("id", "titlu", "autori", "an", "jurnal", "doi", "pmid", "sursa",
-          "R1", "R1_motiv", "R1_nota", "R1_nume",
-          "R2", "R2_motiv", "R2_nota", "R2_nume",
-          "stare", "ARB", "ARB_motiv", "ARB_nota", "ARB_nume",
+          "R1", "R1_motiv", "R1_nota", "R1_nume", "R1_data",
+          "R2", "R2_motiv", "R2_nota", "R2_nume", "R2_data",
+          "stare", "ARB", "ARB_motiv", "ARB_nota", "ARB_nume", "ARB_data", "de_reverificat",
           "final", "motiv_final", "abstract")]
   }
   ziua <- function() format(Sys.Date(), "%Y-%m-%d")
@@ -1372,6 +1574,12 @@ server <- function(input, output, session) {
   output$d_tot <- downloadHandler(
     filename = function() paste0("screening_complet_", ziua(), ".csv"),
     content  = function(f) scrie_csv(export_tabel(tabel()), f))
+  output$d_jurnal <- downloadHandler(
+    filename = function() paste0("jurnal_decizii_", ziua(), ".csv"),
+    content  = function(f) {
+      j <- F_JURNAL(dir_p())
+      if (file.exists(j)) file.copy(j, f) else scrie_csv(tabel_gol(COL_JURNAL), f)
+    })
   output$d_inc_csv <- downloadHandler(
     filename = function() paste0("articole_incluse_", ziua(), ".csv"),
     content  = function(f) { t <- tabel(); scrie_csv(export_tabel(t[t$final == "include", ]), f) })

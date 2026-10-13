@@ -16,6 +16,10 @@ if not defined RSCRIPT goto :fara_r
 if not exist "porneste.R" goto :fara_fisiere
 if not exist "app.R" goto :fara_fisiere
 
+REM --- e nevoie de R 4.2 sau mai nou (altfel diacriticele dau erori) ---
+"%RSCRIPT%" --no-init-file -e "quit(status = as.integer(getRversion() < '4.2.0'))"
+if errorlevel 1 goto :r_vechi
+
 echo.
 echo  R gasit:   %RSCRIPT%
 echo  Folder:    %CD%
@@ -36,6 +40,15 @@ echo  Aplicatia s-a oprit (cod %COD%).
 echo  Daca a aparut o eroare sau aplicatia nu s-a deschis, fa o poza acestei ferestre.
 pause
 exit /b 0
+
+:r_vechi
+echo.
+echo  Versiunea de R instalata este prea veche (e nevoie de R 4.2 sau mai nou).
+echo  Se deschide pagina de descarcare: instaleaza R-ul nou, apoi porneste din nou.
+echo.
+start "" "https://cran.r-project.org/bin/windows/base/"
+pause
+exit /b 1
 
 :fara_fisiere
 echo.
