@@ -20,7 +20,9 @@ dir.create(DIR_BAZA, showWarnings = FALSE, recursive = TRUE)
 DIR_BAZA <- normalizePath(DIR_BAZA)
 
 MARCAJ <- "proiect_screening.txt"   # fișier care marchează un folder ca fiind un screening
-FISIERE_DATE <- c("articole.csv", "setari.rds", "decizii_R1.csv", "decizii_R2.csv", "decizii_ARB.csv")
+FISIERE_DATE <- c("articole.csv", "setari.rds", "decizii_R1.csv", "decizii_R2.csv", "decizii_ARB.csv",
+                  "jurnal_R1.csv", "jurnal_R2.csv", "jurnal_ARB.csv", "rol_R1.txt", "rol_R2.txt", "rol_ARB.txt",
+                  "jurnal_decizii.csv", "roluri.csv")   # ultimele două: din versiunea anterioară
 NUME_VECHI <- "(screening fără nume, creat înainte)"
 
 F_ART <- function(dir) file.path(dir, "articole.csv")
@@ -30,7 +32,8 @@ F_DEC <- function(dir, rol) file.path(dir, paste0("decizii_", rol, ".csv"))
 ROLURI   <- c("Recenzor 1" = "R1", "Recenzor 2" = "R2", "Arbitru (al 3-lea recenzor)" = "ARB")
 ETICHETE <- c(include = "INCLUS", exclude = "EXCLUS", maybe = "NESIGUR")
 COL_ART  <- c("id", "titlu", "autori", "an", "jurnal", "doi", "pmid", "abstract", "sursa")
-COL_DEC  <- c("id", "decizie", "motiv", "nota", "nume", "data")
+# R1_vazut / R2_vazut: doar la arbitru — ce deciseseră recenzorii când a decis arbitrul
+COL_DEC  <- c("id", "decizie", "motiv", "nota", "nume", "data", "R1_vazut", "R2_vazut")
 
 SET_IMPLICIT <- list(
   motive = c("Populație nepotrivită",
@@ -107,17 +110,28 @@ citeste_setari <- function(dir) {
 }
 
 # Jurnalul deciziilor: fiecare decizie se ADAUGĂ la final, nimic nu se șterge.
-# Din el se poate reconstitui oricând cine a decis ce și când.
-F_JURNAL   <- function(dir) file.path(dir, "jurnal_decizii.csv")
+# Fiecare rol are jurnalul lui (jurnal_R1.csv, jurnal_R2.csv, jurnal_ARB.csv), ca să nu
+# scrie mai multe calculatoare în același fișier de pe Google Drive. La descărcare se combină.
+F_JURNAL   <- function(dir, rol) file.path(dir, paste0("jurnal_", rol, ".csv"))
+F_JURNAL_VECHI <- function(dir) file.path(dir, "jurnal_decizii.csv")   # jurnalul comun din versiunea anterioară
 COL_JURNAL <- c("data", "rol", "nume", "id", "decizie", "motiv", "nota")
 
 adauga_jurnal <- function(dir, rand) {
-  f <- F_JURNAL(dir)
+  f <- F_JURNAL(dir, rand$rol[1])
   nou <- !file.exists(f)
   if (nou) { con <- file(f, "wb"); writeBin(as.raw(c(0xef, 0xbb, 0xbf)), con); close(con) }
   con <- file(f, "a", encoding = "UTF-8")
   on.exit(close(con))
   write.table(rand[, COL_JURNAL], con, sep = ",", row.names = FALSE, col.names = nou, qmethod = "double")
+}
+
+# Toate jurnalele combinate, în ordinea datei
+jurnal_complet <- function(dir) {
+  f <- c(F_JURNAL_VECHI(dir), sapply(ROLURI, function(r) F_JURNAL(dir, r)))
+  j <- do.call(rbind, lapply(f, citeste_csv, coloane = COL_JURNAL))
+  j <- j[order(j$data), , drop = FALSE]
+  rownames(j) <- NULL
+  j
 }
 
 # Repetă o operație de câteva ori (Google Drive poate bloca temporar fișierele)
@@ -134,7 +148,7 @@ cu_reincercari <- function(f, ce, n = 3) {
 # Salvează o decizie: (1) o adaugă în jurnal, (2) actualizează fișierul cu deciziile
 # curente ale rolului, (3) recitește fișierul ca să verifice că s-a salvat.
 # Dacă ceva eșuează, oprește cu eroare (iar aplicația îi arată recenzorului mesajul).
-salveaza_decizie <- function(dir, rol, id, decizie, motiv, nota, nume) {
+salveaza_decizie <- function(dir, rol, id, decizie, motiv, nota, nume, R1_vazut = "", R2_vazut = "") {
   acum <- format(Sys.time(), "%Y-%m-%d %H:%M:%S")
   cu_reincercari(function()
     adauga_jurnal(dir, data.frame(data = acum, rol = rol, nume = nume, id = id, decizie = decizie,
@@ -144,7 +158,7 @@ salveaza_decizie <- function(dir, rol, id, decizie, motiv, nota, nume) {
     d <- citeste_csv(F_DEC(dir, rol), COL_DEC)
     d <- d[d$id != id, , drop = FALSE]
     d <- rbind(d, data.frame(id = id, decizie = decizie, motiv = motiv, nota = nota, nume = nume,
-                             data = acum, stringsAsFactors = FALSE))
+                             data = acum, R1_vazut = R1_vazut, R2_vazut = R2_vazut, stringsAsFactors = FALSE))
     scrie_csv(d, F_DEC(dir, rol))
     v <- citeste_csv(F_DEC(dir, rol), COL_DEC)
     if (!any(v$id == id & v$decizie == decizie & v$data == acum))
@@ -161,10 +175,38 @@ salveaza_decizie <- function(dir, rol, id, decizie, motiv, nota, nume) {
 # ---------------------------------------------------------------------
 # 2a. ROLURI: fiecare rol e legat de un singur nume, în fiecare screening
 # ---------------------------------------------------------------------
-F_ROLURI <- function(dir) file.path(dir, "roluri.csv")
+# Fiecare rol are fișierul lui (rol_R1.txt etc.: numele și data), ca să nu scrie mai multe
+# calculatoare în același fișier. roluri.csv e citit doar pentru compatibilitate cu versiunea anterioară.
+F_ROL <- function(dir, rol) file.path(dir, paste0("rol_", rol, ".txt"))
+F_ROLURI_VECHI <- function(dir) file.path(dir, "roluri.csv")
 eticheta_rol <- function(rol) names(ROLURI)[match(rol, ROLURI)]
-citeste_roluri <- function(dir) citeste_csv(F_ROLURI(dir), c("rol", "nume", "data"))
 acelasi_nume <- function(a, b) tolower(trimws(a)) == tolower(trimws(b))
+
+citeste_roluri <- function(dir) {
+  vechi <- citeste_csv(F_ROLURI_VECHI(dir), c("rol", "nume", "data"))
+  r <- lapply(ROLURI, function(rol) {
+    f <- F_ROL(dir, rol)
+    if (file.exists(f)) {
+      x <- readLines(f, warn = FALSE, encoding = "UTF-8")
+      x <- sub("^\ufeff", "", x)
+      if (length(x) && nzchar(trimws(x[1])))
+        return(data.frame(rol = rol, nume = trimws(x[1]), data = if (length(x) > 1) x[2] else "",
+                          stringsAsFactors = FALSE))
+      return(NULL)                      # fișier gol = rol eliberat
+    }
+    vechi[vechi$rol == rol, , drop = FALSE][1, , drop = FALSE]
+  })
+  r <- do.call(rbind, c(list(data.frame(rol = character(0), nume = character(0), data = character(0))), r))
+  r <- r[!is.na(r$rol) & !is.na(r$nume) & nzchar(r$nume), , drop = FALSE]
+  rownames(r) <- NULL
+  r
+}
+
+scrie_rol <- function(dir, rol, nume) {
+  f <- F_ROL(dir, rol); tmp <- paste0(f, ".tmp")
+  writeLines(enc2utf8(c(trimws(nume), format(Sys.time(), "%Y-%m-%d %H:%M"))), tmp, useBytes = TRUE)
+  if (!file.rename(tmp, f)) { ok <- file.copy(tmp, f, overwrite = TRUE); unlink(tmp); if (!ok) stop("nu am putut scrie ", basename(f)) }
+}
 
 # NULL dacă numele poate lucra în rolul dat; altfel textul problemei
 problema_rol <- function(dir, rol, nume) {
@@ -186,19 +228,19 @@ problema_rol <- function(dir, rol, nume) {
 leaga_rol <- function(dir, rol, nume) {
   pr <- problema_rol(dir, rol, nume)
   if (!is.null(pr)) stop(pr)
-  r <- citeste_roluri(dir)
-  if (!any(r$rol == rol)) {
-    r <- rbind(r, data.frame(rol = rol, nume = trimws(nume), data = format(Sys.time(), "%Y-%m-%d %H:%M"),
-                             stringsAsFactors = FALSE))
-    cu_reincercari(function() scrie_csv(r, F_ROLURI(dir)), "nu am putut salva rolul")
-  }
+  if (!any(citeste_roluri(dir)$rol == rol))
+    cu_reincercari(function() scrie_rol(dir, rol, nume), "nu am putut salva rolul")
   invisible(TRUE)
 }
 
 elibereaza_rol <- function(dir, rol, cine) {
   r <- citeste_roluri(dir)
   vechi <- r$nume[r$rol == rol]
-  cu_reincercari(function() scrie_csv(r[r$rol != rol, , drop = FALSE], F_ROLURI(dir)), "nu am putut elibera rolul")
+  cu_reincercari(function() {
+    # fișierul gol marchează rolul ca liber (și acoperă intrarea din roluri.csv vechi)
+    f <- F_ROL(dir, rol); writeLines("", f)
+    if (any(citeste_roluri(dir)$rol == rol)) stop("rolul e încă ocupat")
+  }, "nu am putut elibera rolul")
   adauga_jurnal(dir, data.frame(data = format(Sys.time(), "%Y-%m-%d %H:%M:%S"), rol = rol, nume = cine, id = "",
                                 decizie = "ROL ELIBERAT", motiv = "", nota = paste("rolul îi aparținea lui", vechi),
                                 stringsAsFactors = FALSE))
@@ -497,7 +539,13 @@ combina <- function(D) {
   a$stare <- ifelse(!ambii, "neterminat", ifelse(acord, "acord", "conflict"))
   # Decizia arbitrului e valabilă doar dacă e mai nouă decât deciziile recenzorilor;
   # dacă un recenzor și-a schimbat decizia după aceea, conflictul trebuie reverificat.
-  arb_valid <- nzchar(a$ARB) & a$ARB_data >= pmax(a$R1_data, a$R2_data)
+  # Decizia arbitrului e valabilă cât timp deciziile recenzorilor sunt cele pe care le-a văzut
+  # arbitrul (nu se compară orele: ceasurile calculatoarelor pot fi diferite).
+  # Deciziile arbitrului din versiunea anterioară (fără aceste informații) sunt considerate valabile.
+  m <- match(a$id, D$ARB$id)
+  v1 <- D$ARB$R1_vazut[m]; v1[is.na(v1)] <- ""
+  v2 <- D$ARB$R2_vazut[m]; v2[is.na(v2)] <- ""
+  arb_valid <- nzchar(a$ARB) & ((!nzchar(v1) & !nzchar(v2)) | (v1 == a$R1 & v2 == a$R2))
   a$rezolvat <- a$stare == "conflict" & arb_valid
   a$de_reverificat <- a$stare == "conflict" & nzchar(a$ARB) & !arb_valid
   a$final <- ifelse(a$stare == "acord", a$R1,
@@ -938,10 +986,13 @@ ui <- navbarPage(
       tags$ul(
         tags$li("La prima decizie, fiecare rol se leagă de numele persoanei. Altcineva nu mai poate salva în acel rol ",
                 "(rolul se poate elibera din tab-ul «1. Import & setări»)."),
-        tags$li("Fiecare decizie (și fiecare schimbare de decizie) se adaugă în ", code("jurnal_decizii.csv"),
-                ", cu dată și oră; nimic nu se șterge. Jurnalul se descarcă din tab-ul «4. Rezultate»."),
-        tags$li("Dacă un recenzor își schimbă decizia după ce arbitrul a rezolvat conflictul, conflictul apare din nou ",
-                "la arbitru, marcat «de reverificat»."),
+        tags$li("Fiecare decizie (și fiecare schimbare de decizie) se adaugă în jurnalul rolului ",
+                "(", code("jurnal_R1.csv"), ", ", code("jurnal_R2.csv"), ", ", code("jurnal_ARB.csv"), "), cu dată și oră; ",
+                "nimic nu se șterge. Din tab-ul «4. Rezultate» se descarcă jurnalul combinat."),
+        tags$li("Oricine poate elibera un rol (inclusiv al altcuiva); eliberarea rămâne notată în jurnal."),
+        tags$li("Când arbitrul decide, se salvează și deciziile recenzorilor din acel moment. Dacă un recenzor ",
+                "își schimbă apoi decizia, conflictul apare din nou la arbitru, marcat «de reverificat» ",
+                "(nu se compară orele, deci ceasurile calculatoarelor nu contează)."),
         tags$li(strong("Orbirea se bazează pe încredere: "), "aplicația nu le arată recenzorilor deciziile celuilalt, ",
                 "conflictele sau rezultatele, dar fișierele de pe Google Drive pot fi deschise de oricine are acces. ",
                 "Scrieți asta explicit în protocol.")
@@ -1343,7 +1394,13 @@ server <- function(input, output, session) {
   salveaza_sigur <- function(rol, id, dec, motiv, nota) {
     ok <- tryCatch({
       leaga_rol(dir_p(), rol, trimws(input$nume))
-      salveaza_decizie(dir_p(), rol, id, dec, motiv, nota, trimws(input$nume))
+      v1 <- v2 <- ""
+      if (rol == "ARB") {                 # ce deciseseră recenzorii în acest moment
+        d1 <- citeste_csv(F_DEC(dir_p(), "R1"), COL_DEC); d2 <- citeste_csv(F_DEC(dir_p(), "R2"), COL_DEC)
+        v1 <- d1$decizie[match(id, d1$id)]; v2 <- d2$decizie[match(id, d2$id)]
+        if (is.na(v1) || is.na(v2)) stop("articolul nu are încă decizia ambilor recenzori")
+      }
+      salveaza_decizie(dir_p(), rol, id, dec, motiv, nota, trimws(input$nume), v1, v2)
       TRUE
     }, error = function(e) {
       showModal(modalDialog(title = "⚠ Decizia NU a fost salvată",
@@ -1577,8 +1634,7 @@ server <- function(input, output, session) {
   output$d_jurnal <- downloadHandler(
     filename = function() paste0("jurnal_decizii_", ziua(), ".csv"),
     content  = function(f) {
-      j <- F_JURNAL(dir_p())
-      if (file.exists(j)) file.copy(j, f) else scrie_csv(tabel_gol(COL_JURNAL), f)
+      scrie_csv(jurnal_complet(dir_p()), f)
     })
   output$d_inc_csv <- downloadHandler(
     filename = function() paste0("articole_incluse_", ziua(), ".csv"),
