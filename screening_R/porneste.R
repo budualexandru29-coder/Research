@@ -60,11 +60,12 @@ cauta_folder_drive <- function() {
   if (.Platform$OS.type == "windows") {
     litere <- paste0(LETTERS[4:26], ":/")
     litere <- litere[dir.exists(litere)]
-    radacini <- unlist(lapply(litere, function(l)
-      file.path(l, c("My Drive", "Drive-ul meu", "Drive-ul meu ", "Mein Drive", "Mon Drive", "Mi unidad"))))
+    radacini <- as.character(unlist(lapply(litere, function(l)
+      file.path(l, c("My Drive", "Drive-ul meu", "Drive-ul meu ", "Mein Drive", "Mon Drive", "Mi unidad")))))
   } else if (Sys.info()[["sysname"]] == "Darwin") {
     radacini <- Sys.glob(path.expand("~/Library/CloudStorage/GoogleDrive-*/*"))
   }
+  if (!length(radacini)) return(NA)            # niciun Google Drive pe acest calculator
   radacini <- radacini[dir.exists(radacini)]
   if (!length(radacini)) return(NA)
   # 1. direct în My Drive
